@@ -67,7 +67,7 @@ function Landing({ onStart }: { onStart: () => void }) {
           <img
             src="/clancy-mascot.png"
             alt="Clancy mascot"
-            className="w-64 sm:w-80 lg:w-96"
+            className="w-80 sm:w-96 lg:w-[480px] object-contain"
             style={{
               filter: "drop-shadow(0 0 24px rgba(79, 255, 176, 0.4)) drop-shadow(0 0 60px rgba(79, 255, 176, 0.2))",
             }}
