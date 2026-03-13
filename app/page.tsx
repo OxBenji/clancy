@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -241,15 +242,43 @@ function Planning({
 function Building({
   tasks: initialTasks,
   projectId,
+  description,
 }: {
   tasks: PlanTask[];
   projectId: string;
+  description: string;
 }) {
   const [tasks, setTasks] = useState<PlanTask[]>(initialTasks);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [complete, setComplete] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const started = useRef(false);
+
+  async function handleSave() {
+    setSaving(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      // Not logged in — redirect to auth
+      window.location.href = "/auth";
+      return;
+    }
+
+    const { error } = await supabase.from("projects").insert({
+      id: projectId,
+      user_id: user.id,
+      title: description.slice(0, 100),
+      description,
+      status: "complete",
+    });
+
+    setSaving(false);
+    if (!error) setSaved(true);
+  }
 
   useEffect(() => {
     if (logEndRef.current) {
@@ -410,11 +439,21 @@ function Building({
     <div className="min-h-screen flex flex-col">
       {/* Success banner */}
       {complete && (
-        <div className="bg-accent text-bg text-center py-3 font-syne font-700 text-sm sm:text-base">
-          Your project is ready.{" "}
-          <a href="#" className="underline">
-            https://clancy.sh/deploy/a1b2c3
-          </a>
+        <div className="bg-accent text-bg text-center py-3 font-syne font-700 text-sm sm:text-base flex items-center justify-center gap-4">
+          <span>Your project is ready.</span>
+          {saved ? (
+            <span className="bg-bg/20 px-3 py-1 rounded-lg text-sm">
+              Saved to your projects
+            </span>
+          ) : (
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-bg text-accent px-4 py-1 rounded-lg text-sm hover:bg-bg/80 transition-colors disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save Your Project"}
+            </button>
+          )}
         </div>
       )}
 
@@ -513,9 +552,11 @@ function Building({
 export default function Home() {
   const [view, setView] = useState<View>("landing");
   const [tasks, setTasks] = useState<PlanTask[]>([]);
+  const [description, setDescription] = useState("");
   const [projectId] = useState(() => uid());
 
-  const handlePlan = useCallback((_desc: string, newTasks: PlanTask[]) => {
+  const handlePlan = useCallback((desc: string, newTasks: PlanTask[]) => {
+    setDescription(desc);
     setTasks(newTasks);
     setView("planning");
   }, []);
@@ -532,6 +573,12 @@ export default function Home() {
     case "planning":
       return <Planning tasks={tasks} onBuild={handleBuild} />;
     case "building":
-      return <Building tasks={tasks} projectId={projectId} />;
+      return (
+        <Building
+          tasks={tasks}
+          projectId={projectId}
+          description={description}
+        />
+      );
   }
 }
