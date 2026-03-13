@@ -38,25 +38,42 @@ function uid(): string {
 
 function Landing({ onStart }: { onStart: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
-      {/* Hero */}
-      <p className="text-accent font-mono text-sm tracking-widest uppercase mb-4">
-        Clancy
-      </p>
-      <h1 className="font-syne font-800 text-4xl sm:text-6xl lg:text-7xl max-w-3xl leading-tight mb-6">
-        Describe&nbsp;it. Watch&nbsp;it&nbsp;build. Get&nbsp;a&nbsp;live&nbsp;link.
-      </h1>
-      <p className="text-slate-400 max-w-xl mb-10 text-lg">
-        Tell Clancy what you want. An autonomous AI agent breaks it into tasks,
-        executes them one by one, and ships a working project — while you watch
-        every step in real time.
-      </p>
-      <button
-        onClick={onStart}
-        className="bg-accent text-bg font-syne font-700 text-lg px-8 py-4 rounded-xl hover:brightness-110 transition-all"
-      >
-        Start Building
-      </button>
+    <div className="flex flex-col items-center justify-center min-h-screen px-6">
+      {/* Hero — two-column on desktop, stacked on mobile */}
+      <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-20 max-w-6xl w-full">
+        {/* Left: text */}
+        <div className="flex-1 text-center lg:text-left">
+          <p className="text-accent font-mono text-sm tracking-widest uppercase mb-4">
+            Clancy
+          </p>
+          <h1 className="font-syne font-800 text-4xl sm:text-6xl lg:text-7xl leading-tight mb-6">
+            Describe&nbsp;it. Watch&nbsp;it&nbsp;build. Get&nbsp;a&nbsp;live&nbsp;link.
+          </h1>
+          <p className="text-slate-400 max-w-xl mb-10 text-lg mx-auto lg:mx-0">
+            Tell Clancy what you want. An autonomous AI agent breaks it into tasks,
+            executes them one by one, and ships a working project — while you watch
+            every step in real time.
+          </p>
+          <button
+            onClick={onStart}
+            className="bg-accent text-bg font-syne font-700 text-lg px-8 py-4 rounded-xl hover:brightness-110 transition-all"
+          >
+            Start Building
+          </button>
+        </div>
+
+        {/* Right: mascot */}
+        <div className="flex-shrink-0">
+          <img
+            src="/clancy-mascot.png"
+            alt="Clancy mascot"
+            className="w-64 sm:w-80 lg:w-96"
+            style={{
+              filter: "drop-shadow(0 0 24px rgba(79, 255, 176, 0.4)) drop-shadow(0 0 60px rgba(79, 255, 176, 0.2))",
+            }}
+          />
+        </div>
+      </div>
 
       {/* Features */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 mt-24 max-w-4xl w-full">
