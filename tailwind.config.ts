@@ -9,8 +9,27 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "var(--background)",
-        foreground: "var(--foreground)",
+        bg: "#07090F",
+        surface: "#0D1120",
+        accent: "#4FFFB0",
+      },
+      fontFamily: {
+        syne: ["Syne", "sans-serif"],
+        mono: ["IBM Plex Mono", "monospace"],
+      },
+      keyframes: {
+        "fade-in-up": {
+          "0%": { opacity: "0", transform: "translateY(12px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        pulse_dot: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.3" },
+        },
+      },
+      animation: {
+        "fade-in-up": "fade-in-up 0.4s ease-out forwards",
+        pulse_dot: "pulse_dot 1.2s ease-in-out infinite",
       },
     },
   },
