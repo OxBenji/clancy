@@ -110,66 +110,44 @@ export async function POST(request: Request) {
         });
 
         try {
-          const checkPkg = await runCommandStreaming(
+          // Always use python3 http.server — it's guaranteed available in E2B
+          send("agent_log", {
+            task_id: "system",
+            log: "Starting preview server (python3)...",
+          });
+
+          await runCommandStreaming(
             sandbox,
-            "cat /home/user/project/package.json 2>/dev/null || echo '{}'"
+            "cd /home/user/project && python3 -m http.server 3000 &",
+            { timeoutMs: 5_000 }
           );
-          const hasPkg = checkPkg.stdout.includes('"scripts"');
 
-          if (hasPkg) {
-            send("agent_log", {
-              task_id: "system",
-              log: "Detected package.json with scripts, starting dev server...",
-            });
-            await runCommandStreaming(
-              sandbox,
-              "cd /home/user/project && npm run dev -- --port 3000",
-              { background: true, timeoutMs: 10_000 }
-            ).catch(() =>
-              runCommandStreaming(
-                sandbox,
-                "cd /home/user/project && npm start",
-                { background: true, timeoutMs: 10_000 }
-              )
-            );
-          } else {
-            send("agent_log", {
-              task_id: "system",
-              log: "Starting static file server...",
-            });
-            await runCommandStreaming(
-              sandbox,
-              "cd /home/user/project && npm install -g serve",
-              { timeoutMs: 30_000 }
-            ).catch(() => {});
-            await runCommandStreaming(
-              sandbox,
-              "cd /home/user/project && serve -l 3000",
-              { background: true, timeoutMs: 10_000 }
-            ).catch(() =>
-              runCommandStreaming(
-                sandbox,
-                "cd /home/user/project && python3 -m http.server 3000",
-                { background: true, timeoutMs: 10_000 }
-              )
-            );
-          }
-
-          await new Promise((r) => setTimeout(r, 3000));
+          // Give server a moment to bind
+          await new Promise((r) => setTimeout(r, 2000));
 
           const previewUrl = getPreviewUrl(sandbox, 3000);
           send("preview_url", { url: previewUrl });
           send("agent_log", {
             task_id: "system",
-            log: `Preview available at ${previewUrl}`,
+            log: `Preview: ${previewUrl}`,
           });
         } catch (previewErr) {
-          const msg =
-            previewErr instanceof Error ? previewErr.message : "Unknown error";
-          send("agent_log", {
-            task_id: "system",
-            log: `Could not start preview server: ${msg}. Project files were created successfully.`,
-          });
+          // Even if the server command "fails" (background process), still try the URL
+          try {
+            const previewUrl = getPreviewUrl(sandbox, 3000);
+            send("preview_url", { url: previewUrl });
+            send("agent_log", {
+              task_id: "system",
+              log: `Preview: ${previewUrl}`,
+            });
+          } catch {
+            const msg =
+              previewErr instanceof Error ? previewErr.message : "Unknown error";
+            send("agent_log", {
+              task_id: "system",
+              log: `Could not start preview: ${msg}`,
+            });
+          }
         }
 
         const db = getSupabaseAdmin();
