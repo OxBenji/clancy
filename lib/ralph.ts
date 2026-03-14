@@ -556,9 +556,9 @@ export async function runRalphLoop(
             ],
           });
 
-          // 180-second timeout on the API call
+          // 300-second timeout on the API call (large responses at ~80 tok/s can take 200s+)
           const timeout = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Claude API call timed out after 180s")), 180_000)
+            setTimeout(() => reject(new Error("Claude API call timed out after 300s")), 300_000)
           );
 
           response = await Promise.race([apiPromise, timeout]);
