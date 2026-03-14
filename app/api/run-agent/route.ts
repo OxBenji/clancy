@@ -1,9 +1,15 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { supabase } from "@/lib/supabase";
+import {
+  createProjectSandbox,
+  runCommandStreaming,
+  getPreviewUrl,
+} from "@/lib/sandbox";
+import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { runRalphLoop } from "@/lib/ralph";
+import { rateLimit, getRequestIP } from "@/lib/rate-limit";
+import { validateDescription, clampString } from "@/lib/sanitize";
+import type { RalphTask } from "@/lib/ralph";
 
-const SYSTEM_PROMPT = `You are an autonomous software agent. You are executing one task from a larger project. Describe exactly what you are doing step by step as you work. Be specific and technical. Output 3-5 short action lines.`;
-
-interface Task {
+interface TaskInput {
   id: string;
   label: string;
   order_index: number;
@@ -14,7 +20,17 @@ function sseEvent(event: string, data: Record<string, unknown>): string {
 }
 
 export async function POST(request: Request) {
-  let body: { project_id?: string; tasks?: Task[] };
+  // Rate limit: 10 requests per IP per minute
+  const ip = getRequestIP(request);
+  const rl = rateLimit(`run-agent:${ip}`, { maxRequests: 10, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return new Response(
+      JSON.stringify({ error: "Too many requests. Please wait before trying again." }),
+      { status: 429, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  let body: { project_id?: string; tasks?: TaskInput[]; description?: string };
   try {
     body = await request.json();
   } catch {
@@ -24,7 +40,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const { project_id, tasks } = body;
+  const { project_id, tasks, description } = body;
 
   if (!project_id || typeof project_id !== "string") {
     return new Response(JSON.stringify({ error: "project_id is required" }), {
@@ -33,90 +49,128 @@ export async function POST(request: Request) {
     });
   }
 
-  if (!Array.isArray(tasks) || tasks.length === 0) {
-    return new Response(JSON.stringify({ error: "tasks array is required and must not be empty" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+  if (!Array.isArray(tasks) || tasks.length === 0 || tasks.length > 20) {
+    return new Response(
+      JSON.stringify({ error: "tasks array is required (1-20 items)" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
   }
 
-  const sorted = [...tasks].sort((a, b) => a.order_index - b.order_index);
+  // Validate description
+  const descResult = validateDescription(description ?? "A web project");
+  const safeDescription = descResult.valid ? descResult.value : "A web project";
+
+  // Validate task labels
+  const ralphTasks: RalphTask[] = tasks.map((t) => ({
+    id: t.id,
+    label: clampString(t.label || "", 200),
+    order_index: t.order_index,
+  }));
 
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
       const send = (event: string, data: Record<string, unknown>) => {
-        controller.enqueue(encoder.encode(sseEvent(event, data)));
+        try {
+          controller.enqueue(encoder.encode(sseEvent(event, data)));
+        } catch {
+          // Controller may be closed
+        }
       };
 
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      try {
+        send("agent_log", {
+          task_id: "system",
+          log: "Spinning up sandbox environment...",
+        });
 
-      for (const task of sorted) {
-        const startTime = Date.now();
+        const sandbox = await createProjectSandbox();
 
-        send("task_start", { task_id: task.id, label: task.label });
+        send("sandbox_id", { id: sandbox.sandboxId });
+        send("agent_log", {
+          task_id: "system",
+          log: `Sandbox ready (${sandbox.sandboxId}). Starting Ralph loop...`,
+        });
 
-        // Mark task as active in Supabase
-        await supabase
-          .from("tasks")
-          .update({ status: "active" })
-          .eq("id", task.id);
+        await runCommandStreaming(sandbox, "mkdir -p /home/user/project");
+
+        // ── Run the Ralph loop ──
+        const { totalCostUsd } = await runRalphLoop(
+          project_id,
+          safeDescription,
+          ralphTasks,
+          sandbox,
+          ({ event, data }) => send(event, data)
+        );
+
+        // ── Start preview server ──
+        send("agent_log", {
+          task_id: "system",
+          log: "Starting preview server...",
+        });
 
         try {
-          const response = await client.messages.create({
-            model: "claude-sonnet-4-6",
-            max_tokens: 512,
-            system: SYSTEM_PROMPT,
-            messages: [
-              {
-                role: "user",
-                content: `Execute this task: "${task.label}"`,
-              },
-            ],
+          // Always use python3 http.server — it's guaranteed available in E2B
+          send("agent_log", {
+            task_id: "system",
+            log: "Starting preview server (python3)...",
           });
 
-          const textBlock = response.content.find((b) => b.type === "text");
-          if (textBlock && textBlock.type === "text") {
-            const lines = textBlock.text
-              .split("\n")
-              .map((l) => l.trim())
-              .filter(Boolean);
+          await runCommandStreaming(
+            sandbox,
+            "cd /home/user/project && python3 -m http.server 3000 &",
+            { timeoutMs: 5_000 }
+          );
 
-            for (const line of lines) {
-              send("agent_log", { task_id: task.id, log: line });
-            }
+          // Give server a moment to bind
+          await new Promise((r) => setTimeout(r, 2000));
+
+          const previewUrl = getPreviewUrl(sandbox, 3000);
+          send("preview_url", { url: previewUrl });
+          send("agent_log", {
+            task_id: "system",
+            log: `Preview: ${previewUrl}`,
+          });
+        } catch (previewErr) {
+          // Even if the server command "fails" (background process), still try the URL
+          try {
+            const previewUrl = getPreviewUrl(sandbox, 3000);
+            send("preview_url", { url: previewUrl });
+            send("agent_log", {
+              task_id: "system",
+              log: `Preview: ${previewUrl}`,
+            });
+          } catch {
+            const msg =
+              previewErr instanceof Error ? previewErr.message : "Unknown error";
+            send("agent_log", {
+              task_id: "system",
+              log: `Could not start preview: ${msg}`,
+            });
           }
-
-          const duration = Math.round((Date.now() - startTime) / 1000);
-
-          // Mark task as done in Supabase
-          await supabase
-            .from("tasks")
-            .update({ status: "done", duration_seconds: duration })
-            .eq("id", task.id);
-
-          send("task_complete", { task_id: task.id, duration });
-        } catch (err: unknown) {
-          const message =
-            err instanceof Error ? err.message : "Unknown error";
-
-          // Mark task as failed in Supabase
-          await supabase
-            .from("tasks")
-            .update({ status: "error" })
-            .eq("id", task.id);
-
-          send("task_error", { task_id: task.id, error: message });
         }
+
+        const db = getSupabaseAdmin();
+        await db
+          .from("projects")
+          .update({ status: "complete" })
+          .eq("id", project_id);
+
+        send("build_complete", {
+          message: "Your project is ready!",
+          cost_usd: totalCostUsd,
+        });
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error ? err.message : "Sandbox creation failed";
+        send("agent_log", {
+          task_id: "system",
+          log: `Error: ${message}`,
+        });
+        send("build_complete", {
+          message: "Build encountered errors. Check the log above.",
+        });
       }
-
-      // Update project status
-      await supabase
-        .from("projects")
-        .update({ status: "complete" })
-        .eq("id", project_id);
-
-      send("build_complete", { message: "Your project is ready." });
 
       controller.close();
     },
