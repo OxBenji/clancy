@@ -11,7 +11,7 @@ const config: Config = {
       colors: {
         bg: "#07090F",
         surface: "#0D1120",
-        accent: "#4FFFB0",
+        accent: "#4D8BFF",
       },
       fontFamily: {
         syne: ["Syne", "sans-serif"],

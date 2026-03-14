@@ -4,6 +4,9 @@ import { Sandbox } from "e2b";
  * Creates an E2B sandbox with a 10-minute timeout.
  */
 export async function createProjectSandbox(): Promise<Sandbox> {
+  if (!process.env.E2B_API_KEY) {
+    throw new Error("E2B_API_KEY is not set — cannot create sandbox");
+  }
   const sandbox = await Sandbox.create({
     apiKey: process.env.E2B_API_KEY,
     timeoutMs: 10 * 60 * 1000,
@@ -15,6 +18,9 @@ export async function createProjectSandbox(): Promise<Sandbox> {
  * Reconnect to an existing sandbox by ID.
  */
 export async function reconnectSandbox(sandboxId: string): Promise<Sandbox> {
+  if (!process.env.E2B_API_KEY) {
+    throw new Error("E2B_API_KEY is not set — cannot connect to sandbox");
+  }
   return await Sandbox.connect(sandboxId, {
     apiKey: process.env.E2B_API_KEY,
   });
