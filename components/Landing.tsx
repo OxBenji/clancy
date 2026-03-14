@@ -68,7 +68,7 @@ export default function Landing({
           </div>
           <p className="text-slate-600 font-mono text-xs mt-4">
             Free during beta &middot; No credit card &middot; Built by
-            @BenjiShips
+            @OxBenji
           </p>
         </div>
 
@@ -229,7 +229,7 @@ export default function Landing({
           >
             Ralph
           </a>{" "}
-          by @AidenBai &middot; Built with love by @BenjiShips
+          by @AidenBai &middot; Built with love by @OxBenji
         </p>
       </div>
     </div>
