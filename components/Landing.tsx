@@ -68,7 +68,7 @@ export default function Landing({
           </div>
           <p className="text-slate-600 font-mono text-xs mt-4">
             Free during beta &middot; No credit card &middot; Built by
-            @OxBenji
+            @xobenji
           </p>
         </div>
 
@@ -78,7 +78,7 @@ export default function Landing({
             className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full pointer-events-none z-0"
             style={{
               background:
-                "radial-gradient(circle, rgba(79, 255, 176, 0.08) 0%, transparent 70%)",
+                "radial-gradient(circle, rgba(77, 139, 255, 0.08) 0%, transparent 70%)",
               filter: "blur(80px)",
             }}
           />
@@ -91,7 +91,7 @@ export default function Landing({
             className="relative z-10 w-80 sm:w-96 lg:w-[480px] object-contain"
             style={{
               filter:
-                "drop-shadow(0 0 24px rgba(79, 255, 176, 0.4)) drop-shadow(0 0 60px rgba(79, 255, 176, 0.2))",
+                "drop-shadow(0 0 24px rgba(77, 139, 255, 0.4)) drop-shadow(0 0 60px rgba(77, 139, 255, 0.2))",
             }}
           />
         </div>
@@ -137,7 +137,7 @@ export default function Landing({
           ].map((f) => (
             <div
               key={f.title}
-              className="bg-surface rounded-xl p-6 text-left border border-transparent hover:border-accent/30 hover:shadow-[0_0_24px_rgba(79,255,176,0.06)] transition-all duration-300 group"
+              className="bg-surface rounded-xl p-6 text-left border border-transparent hover:border-accent/30 hover:shadow-[0_0_24px_rgba(77,139,255,0.06)] transition-all duration-300 group"
             >
               <span className="text-3xl mb-3 block">{f.icon}</span>
               <h3 className="font-syne font-700 text-accent text-xl mb-2 group-hover:brightness-110 transition-all">
@@ -229,7 +229,7 @@ export default function Landing({
           >
             Ralph
           </a>{" "}
-          by @AidenBai &middot; Built with love by @OxBenji
+          by @AidenBai &middot; Built with love by @xobenji
         </p>
       </div>
     </div>

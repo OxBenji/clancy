@@ -32,7 +32,7 @@ export const metadata: Metadata = {
     title: "Clancy — Describe it. Watch it build. Get a live link.",
     description:
       "Autonomous AI agent that builds working projects from plain English descriptions. No code required.",
-    creator: "@OxBenji",
+    creator: "@xobenji",
   },
 };
 
