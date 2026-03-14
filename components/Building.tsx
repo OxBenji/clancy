@@ -7,6 +7,11 @@ import type { PlanTask, LogEntry, FileEntry } from "@/lib/types";
 
 type MobilePanel = "tasks" | "log" | "files";
 
+/** Strip HTML tags from log text to prevent XSS. */
+function sanitizeLog(text: string): string {
+  return text.replace(/<[^>]*>/g, "");
+}
+
 export default function Building({
   tasks: initialTasks,
   projectId,
@@ -29,6 +34,9 @@ export default function Building({
   const [complete, setComplete] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [costUsd, setCostUsd] = useState(0);
+  const [costLimit, setCostLimit] = useState(2.0);
+  const [budgetExceeded, setBudgetExceeded] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("log");
   const logEndRef = useRef<HTMLDivElement>(null);
   const started = useRef(false);
@@ -71,6 +79,8 @@ export default function Building({
         id?: string;
         path?: string;
         content?: string;
+        cost_usd?: number;
+        limit_usd?: number;
       }
     ) => {
       switch (event) {
@@ -84,7 +94,7 @@ export default function Building({
             ...prev,
             {
               task_id: data.task_id!,
-              text: `--- Starting: ${data.label} ---`,
+              text: sanitizeLog(`--- Starting: ${data.label} ---`),
               ts: Date.now(),
             },
           ]);
@@ -93,7 +103,7 @@ export default function Building({
         case "agent_log":
           setLogs((prev) => [
             ...prev,
-            { task_id: data.task_id!, text: data.log!, ts: Date.now() },
+            { task_id: data.task_id!, text: sanitizeLog(data.log!), ts: Date.now() },
           ]);
           break;
 
@@ -125,7 +135,7 @@ export default function Building({
             ...prev,
             {
               task_id: data.task_id!,
-              text: `--- Error: ${data.error} ---`,
+              text: sanitizeLog(`--- Error: ${data.error} ---`),
               ts: Date.now(),
             },
           ]);
@@ -146,11 +156,29 @@ export default function Building({
           setPreviewUrl(data.url!);
           break;
 
+        case "cost_update":
+          if (typeof data.cost_usd === "number") setCostUsd(data.cost_usd);
+          if (typeof data.limit_usd === "number") setCostLimit(data.limit_usd);
+          break;
+
+        case "budget_exceeded":
+          setBudgetExceeded(true);
+          setComplete(true);
+          setLogs((prev) => [
+            ...prev,
+            {
+              task_id: "system",
+              text: `--- Budget exceeded: $${(data.cost_usd ?? 0).toFixed(2)} / $${(data.limit_usd ?? 2).toFixed(2)} limit ---`,
+              ts: Date.now(),
+            },
+          ]);
+          break;
+
         case "build_complete":
           setComplete(true);
           setLogs((prev) => [
             ...prev,
-            { task_id: "system", text: data.message!, ts: Date.now() },
+            { task_id: "system", text: sanitizeLog(data.message!), ts: Date.now() },
           ]);
           break;
       }
@@ -267,8 +295,8 @@ export default function Building({
     <div className="min-h-screen flex flex-col">
       {/* Success banner with preview URL */}
       {complete && (
-        <div className="bg-accent text-bg text-center py-3 font-syne font-700 text-sm sm:text-base flex flex-wrap items-center justify-center gap-4 px-4">
-          <span>Your project is ready!</span>
+        <div className={`${budgetExceeded ? "bg-red-500" : "bg-accent"} text-bg text-center py-3 font-syne font-700 text-sm sm:text-base flex flex-wrap items-center justify-center gap-4 px-4`}>
+          <span>{budgetExceeded ? "Budget limit reached" : "Your project is ready!"}</span>
           {previewUrl && (
             <a
               href={previewUrl}
@@ -355,10 +383,15 @@ export default function Building({
               </button>
             )}
           </div>
-          <p className="text-slate-500 text-xs mb-4 font-mono">
+          <p className="text-slate-500 text-xs mb-2 font-mono">
             {tasks.filter((t) => t.status === "done").length}/{tasks.length}{" "}
             completed
           </p>
+          {costUsd > 0 && (
+            <p className={`text-xs mb-4 font-mono ${budgetExceeded ? "text-red-400" : "text-slate-600"}`}>
+              ${costUsd.toFixed(2)} / ${costLimit.toFixed(2)} limit
+            </p>
+          )}
           <ol className="space-y-2">
             {tasks.map((task) => (
               <li

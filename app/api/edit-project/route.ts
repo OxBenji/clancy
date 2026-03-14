@@ -7,24 +7,20 @@ import {
   listFiles,
   getPreviewUrl,
 } from "@/lib/sandbox";
+import { rateLimit, getRequestIP } from "@/lib/rate-limit";
+import { clampString } from "@/lib/sanitize";
 
 const EDIT_SYSTEM_PROMPT = `You are an AI assistant helping edit an existing web project in a sandbox. The user will request changes. You can read existing files and modify them.
 
 Output a JSON object with this structure:
-{
-  "files": [
-    { "path": "/home/user/project/filename", "content": "full updated file content" }
-  ],
-  "commands": [],
-  "summary": "One-line description of what you changed"
-}
+{"files":[{"path":"/home/user/project/filename","content":"full updated file content"}],"commands":[],"summary":"One-line description of what you changed"}
 
 Rules:
 - All file paths must be absolute under /home/user/project/
 - When modifying a file, output the COMPLETE updated content, not just the diff
 - Only include files that need changes
 - Keep the project working after your changes
-- Return ONLY the JSON object, no markdown, no explanation`;
+- RESPOND WITH ONLY RAW JSON. Any non-JSON text will cause a system error.`;
 
 interface EditAction {
   files?: { path: string; content: string }[];
@@ -55,6 +51,15 @@ function parseResponse(text: string): EditAction | null {
 }
 
 export async function POST(request: Request) {
+  const ip = getRequestIP(request);
+  const rl = rateLimit(`edit-project:${ip}`, { maxRequests: 15, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return new Response(JSON.stringify({ error: "Too many requests" }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   let body: {
     sandbox_id?: string;
     message?: string;
@@ -71,12 +76,22 @@ export async function POST(request: Request) {
 
   const { sandbox_id, message, context } = body;
 
-  if (!sandbox_id || !message) {
+  if (!sandbox_id || typeof sandbox_id !== "string") {
     return new Response(
-      JSON.stringify({ error: "sandbox_id and message are required" }),
+      JSON.stringify({ error: "sandbox_id is required" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
+
+  if (!message || typeof message !== "string") {
+    return new Response(
+      JSON.stringify({ error: "message is required" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  // Clamp user message to 2000 chars
+  const safeMessage = clampString(message, 2000);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -102,10 +117,10 @@ export async function POST(request: Request) {
         let fileContext = "";
         if (context && context.length > 0) {
           fileContext = context
-            .map((f) => `--- ${f.path} ---\n${f.content}`)
+            .slice(0, 10)
+            .map((f) => `--- ${f.path} ---\n${clampString(f.content, 10000)}`)
             .join("\n\n");
         } else {
-          // Try to read main files
           try {
             const projectFiles = await listFiles(
               sandbox,
@@ -132,7 +147,7 @@ export async function POST(request: Request) {
           }
         }
 
-        send("agent_log", { log: `Applying changes: "${message}"` });
+        send("agent_log", { log: `Applying changes: "${safeMessage}"` });
 
         const anthropic = new Anthropic({
           apiKey: process.env.ANTHROPIC_API_KEY,
@@ -145,7 +160,7 @@ export async function POST(request: Request) {
           messages: [
             {
               role: "user",
-              content: `Current project files:\n\n${fileContext}\n\nUser request: "${message}"`,
+              content: `Current project files:\n\n${fileContext}\n\nUser request: "${safeMessage}"`,
             },
           ],
         });
@@ -177,7 +192,7 @@ export async function POST(request: Request) {
 
         // Run any commands
         if (action.commands && action.commands.length > 0) {
-          for (const cmd of action.commands) {
+          for (const cmd of action.commands.slice(0, 5)) {
             send("agent_log", { log: `$ ${cmd}` });
             try {
               await runCommandStreaming(sandbox, cmd, { timeoutMs: 60_000 });
@@ -195,9 +210,9 @@ export async function POST(request: Request) {
           summary: action.summary || "Changes applied",
         });
       } catch (err: unknown) {
-        const message =
+        const errMsg =
           err instanceof Error ? err.message : "Edit failed";
-        send("edit_error", { error: message });
+        send("edit_error", { error: errMsg });
       }
 
       controller.close();

@@ -16,6 +16,8 @@ export interface Database {
           title: string | null;
           description: string | null;
           status: string | null;
+          total_tokens_used: number | null;
+          total_cost_usd: number | null;
           created_at: string | null;
         };
         Insert: {
@@ -24,6 +26,8 @@ export interface Database {
           title?: string | null;
           description?: string | null;
           status?: string | null;
+          total_tokens_used?: number | null;
+          total_cost_usd?: number | null;
           created_at?: string | null;
         };
         Update: {
@@ -32,6 +36,8 @@ export interface Database {
           title?: string | null;
           description?: string | null;
           status?: string | null;
+          total_tokens_used?: number | null;
+          total_cost_usd?: number | null;
           created_at?: string | null;
         };
         Relationships: [];
@@ -67,6 +73,38 @@ export interface Database {
         Relationships: [
           {
             foreignKeyName: "tasks_project_id_fkey";
+            columns: ["project_id"];
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+            isOneToOne: false;
+          }
+        ];
+      };
+      guardrails: {
+        Row: {
+          id: string;
+          project_id: string;
+          task_label: string;
+          sign: string;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          project_id: string;
+          task_label: string;
+          sign: string;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          project_id?: string;
+          task_label?: string;
+          sign?: string;
+          created_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "guardrails_project_id_fkey";
             columns: ["project_id"];
             referencedRelation: "projects";
             referencedColumns: ["id"];
