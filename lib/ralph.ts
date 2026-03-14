@@ -33,112 +33,112 @@ interface AgentAction {
   summary?: string;
 }
 
-// ── System prompt for each fresh context ──
+// ── System prompt — base64-encoded file contents ──
 
 const TASK_SYSTEM_PROMPT = `You are an autonomous software agent executing ONE specific task inside a Linux sandbox. You have FRESH context — you do NOT remember previous interactions.
 
 Read the guardrails carefully — these are lessons from previous attempts that you MUST follow.
 
-Execute the task by returning a JSON object:
-{"files":[{"path":"/home/user/project/filename","content":"file content"}],"commands":["cd /home/user/project && npm install"],"summary":"What you did"}
+RESPONSE FORMAT:
+Return your response as a JSON object where each file's content field is BASE64 ENCODED.
 
-Rules:
+{"files":[{"path":"/home/user/project/index.html","content":"BASE64_ENCODED_CONTENT"},{"path":"/home/user/project/css/styles.css","content":"BASE64_ENCODED_CONTENT"}],"commands":["cd /home/user/project && npm install"],"summary":"What you did"}
+
+CRITICAL RULES FOR BASE64:
+- The "content" field of each file MUST be the base64-encoded version of the file content
+- The "path" field is plain text (NOT base64)
+- The "summary" field is plain text (NOT base64)
+- The "commands" array contains plain text commands (NOT base64)
+- ONLY the file content values are base64 encoded
+- To base64 encode: take the raw file content string and encode it to base64
+
+Other rules:
 - All file paths must be absolute, under /home/user/project/
 - Write complete, working code — not pseudocode or placeholders
 - For web projects, use vanilla HTML/CSS/JS by default
 - Include index.html as the entry point
 - Keep files small and focused
 - Commands run in a Linux environment with Node.js, npm, and Python available
-- RESPOND WITH ONLY RAW JSON followed by your completion status
-- When complete, output <promise>COMPLETE</promise> after the JSON
-- If you cannot complete the task, output <promise>FAILED: reason</promise> after the JSON`;
+- RESPOND WITH ONLY THE JSON OBJECT — no markdown fences, no extra text before or after
+- When complete, add "status":"complete" to the JSON
+- If you cannot complete the task, add "status":"failed","reason":"explanation" to the JSON`;
 
-// ── Helpers ──
+// ── Parser: extract files via regex, decode base64 content ──
 
 function parseAgentResponse(text: string): { action: AgentAction | null; complete: boolean; failReason: string | null } {
-  // Extract promise tag
-  const promiseMatch = text.match(/<promise>([\s\S]*?)<\/promise>/);
   let complete = false;
   let failReason: string | null = null;
 
+  // Strip markdown code fences
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
+
+  // Also support legacy <promise> tags
+  const promiseMatch = cleaned.match(/<promise>([\s\S]*?)<\/promise>/);
   if (promiseMatch) {
     const promiseContent = promiseMatch[1].trim();
-    if (promiseContent === "COMPLETE") {
-      complete = true;
-    } else if (promiseContent.startsWith("FAILED:")) {
-      failReason = promiseContent.slice(7).trim();
+    if (promiseContent === "COMPLETE") complete = true;
+    else if (promiseContent.startsWith("FAILED:")) failReason = promiseContent.slice(7).trim();
+    cleaned = cleaned.replace(/<promise>[\s\S]*?<\/promise>/g, "").trim();
+  }
+
+  // Extract files using regex — more forgiving than JSON.parse on the whole object
+  const files: { path: string; content: string }[] = [];
+  const fileRegex = /\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([A-Za-z0-9+/=\s]+?)"\s*\}/g;
+  let match;
+  while ((match = fileRegex.exec(cleaned)) !== null) {
+    const path = match[1];
+    const b64Content = match[2].replace(/\s/g, "");
+    try {
+      const decoded = Buffer.from(b64Content, "base64").toString("utf-8");
+      if (decoded.length > 0) {
+        files.push({ path, content: decoded });
+      }
+    } catch {
+      // skip files that fail to decode
     }
   }
 
-  // Strip promise tags and code fences
-  let jsonText = text
-    .replace(/<promise>[\s\S]*?<\/promise>/g, "")
-    .trim();
-
-  // Remove markdown code fences (```json ... ``` or ``` ... ```)
-  jsonText = jsonText.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
-
-  let action: AgentAction | null = null;
-
-  // Attempt 1: direct parse
-  try {
-    action = JSON.parse(jsonText);
-  } catch {
-    // Attempt 2: find JSON by matching balanced braces
-    action = extractBalancedJson(jsonText);
+  // Extract commands
+  const commands: string[] = [];
+  const cmdRegex = /"commands"\s*:\s*\[([\s\S]*?)\]/;
+  const cmdMatch = cleaned.match(cmdRegex);
+  if (cmdMatch) {
+    const cmdArray = cmdMatch[1];
+    const cmdItemRegex = /"((?:[^"\\]|\\.)*)"/g;
+    let cm;
+    while ((cm = cmdItemRegex.exec(cmdArray)) !== null) {
+      commands.push(cm[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
+    }
   }
 
-  // If we got a valid action with files, consider it complete even without the tag
-  if (action && action.files && action.files.length > 0 && !failReason) {
+  // Extract summary
+  let summary = "";
+  const summaryMatch = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (summaryMatch) {
+    summary = summaryMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+
+  // Check status field
+  const statusMatch = cleaned.match(/"status"\s*:\s*"(\w+)"/);
+  if (statusMatch) {
+    if (statusMatch[1] === "complete") complete = true;
+    else if (statusMatch[1] === "failed") {
+      const reasonMatch = cleaned.match(/"reason"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      failReason = reasonMatch ? reasonMatch[1].replace(/\\"/g, '"') : "Unknown failure";
+    }
+  }
+
+  if (files.length === 0 && commands.length === 0 && !failReason) {
+    return { action: null, complete: false, failReason: null };
+  }
+
+  if (files.length > 0 && !failReason) {
     complete = true;
   }
 
+  const action: AgentAction = { files, commands, summary };
   return { action, complete, failReason };
-}
-
-/** Extract the first balanced JSON object from text with nested braces. */
-function extractBalancedJson(text: string): AgentAction | null {
-  const start = text.indexOf("{");
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-
-    if (escape) {
-      escape = false;
-      continue;
-    }
-
-    if (ch === "\\") {
-      escape = true;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) continue;
-
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        try {
-          return JSON.parse(text.slice(start, i + 1));
-        } catch {
-          return null;
-        }
-      }
-    }
-  }
-
-  return null;
 }
 
 function calculateCost(inputTokens: number, outputTokens: number): number {
@@ -264,12 +264,12 @@ export async function runRalphLoop(
         // ── Fresh Anthropic API call ──
         const response = await anthropic.messages.create({
           model: "claude-sonnet-4-6",
-          max_tokens: 4096,
+          max_tokens: 16384,
           system: TASK_SYSTEM_PROMPT,
           messages: [
             {
               role: "user",
-              content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${previousContext}${guardrailsText}\n\nRespond with ONLY a JSON object. Start your response with { character.`,
+              content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${previousContext}${guardrailsText}\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
             },
           ],
         });
@@ -332,7 +332,7 @@ export async function runRalphLoop(
           await db.from("guardrails").insert({
             project_id: projectId,
             task_label: task.label,
-            sign: "AI returned unparseable response — ensure raw JSON output only",
+            sign: "AI returned unparseable response — base64 encode file content values in JSON",
           });
 
           emit({
@@ -364,10 +364,9 @@ export async function runRalphLoop(
           }
         }
 
-        // ── Execute action: run commands (no line-by-line streaming to keep log clean) ──
+        // ── Execute action: run commands ──
         if (action.commands && Array.isArray(action.commands)) {
           for (const cmd of action.commands.slice(0, 5)) {
-            // Show short version of command (truncate long heredocs/echo)
             const shortCmd = cmd.length > 80 ? cmd.slice(0, 77) + "..." : cmd;
             emit({
               event: "agent_log",
@@ -378,7 +377,6 @@ export async function runRalphLoop(
                 timeoutMs: 120_000,
               });
               if (result.exitCode !== 0) {
-                // Only show last 3 lines of stderr on failure
                 const errLines = result.stderr.trim().split("\n").slice(-3).join("\n");
                 emit({
                   event: "agent_log",
