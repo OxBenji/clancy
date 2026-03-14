@@ -3,17 +3,29 @@ import Anthropic from "@anthropic-ai/sdk";
 import { rateLimit, getRequestIP } from "@/lib/rate-limit";
 import { validateDescription } from "@/lib/sanitize";
 
-const SYSTEM_PROMPT = `You are a project planner for a software builder tool. The user will describe something they want built. Break it into 5-10 concrete, small, buildable tasks. Each task must be specific and verifiable — not vague. Return ONLY a valid JSON array, no markdown, no explanation. Each item has: label (string), estimated_seconds (number between 15 and 60), order_index (number starting at 1)`;
+const SYSTEM_PROMPT = `You are a project planner. Break the user's description into 5-8 tasks. Each task must be:
+1. Small enough to complete in one context window
+2. Have binary verifiable success criteria — things that can be checked by reading the files
+3. Ordered by dependency — each task builds on the previous
+
+For each task return:
+- label: one clear action sentence
+- success_criteria: array of 3-5 file-checkable conditions (e.g. "index.html contains <nav>", "styles.css contains .hero class")
+- estimated_seconds: 20-60
+- order_index: number starting at 1
+
+Return JSON array only. No markdown.`;
 
 interface RawTask {
   label: unknown;
   estimated_seconds: unknown;
   order_index: unknown;
+  success_criteria: unknown;
 }
 
 function validateTasks(
   raw: unknown
-): { label: string; estimated_seconds: number; order_index: number }[] | null {
+): { label: string; estimated_seconds: number; order_index: number; success_criteria: string[] }[] | null {
   if (!Array.isArray(raw) || raw.length === 0 || raw.length > 20) return null;
 
   const validated = [];
@@ -25,10 +37,21 @@ function validateTasks(
     ) {
       return null;
     }
+
+    // Parse success_criteria — default to empty array if missing
+    let criteria: string[] = [];
+    if (Array.isArray(item.success_criteria)) {
+      criteria = item.success_criteria
+        .filter((c): c is string => typeof c === "string")
+        .slice(0, 10)
+        .map((c) => c.slice(0, 200));
+    }
+
     validated.push({
       label: item.label.slice(0, 200),
       estimated_seconds: Math.max(15, Math.min(60, item.estimated_seconds)),
       order_index: item.order_index,
+      success_criteria: criteria,
     });
   }
 
@@ -66,7 +89,7 @@ export async function POST(request: Request) {
 
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: descResult.value }],
     });

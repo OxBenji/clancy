@@ -34,7 +34,7 @@ export default function Create({
         body: JSON.stringify({ description: desc.trim() }),
       });
 
-      let data: { tasks?: { label: string; estimated_seconds: number; order_index: number }[]; error?: string };
+      let data: { tasks?: { label: string; estimated_seconds: number; order_index: number; success_criteria?: string[] }[]; error?: string };
       try {
         data = await res.json();
       } catch {
@@ -56,6 +56,7 @@ export default function Create({
           estimated_seconds: t.estimated_seconds,
           order_index: t.order_index,
           status: "pending" as const,
+          success_criteria: t.success_criteria,
         })
       );
       onPlan(desc.trim(), tasks);
