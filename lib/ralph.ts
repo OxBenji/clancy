@@ -85,9 +85,35 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
   let cleaned = text.trim();
   cleaned = cleaned.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
 
+  // Fix literal newlines/tabs inside JSON string values — models often emit these
+  // instead of proper \n escapes, which breaks JSON.parse.
+  // Walk through the string and escape raw newlines/tabs only when inside a JSON string.
+  function fixLiteralNewlines(json: string): string {
+    let result = "";
+    let inString = false;
+    let i = 0;
+    while (i < json.length) {
+      const ch = json[i];
+      if (ch === '"' && (i === 0 || json[i - 1] !== '\\')) {
+        inString = !inString;
+        result += ch;
+      } else if (inString && ch === '\n') {
+        result += '\\n';
+      } else if (inString && ch === '\r') {
+        result += '\\r';
+      } else if (inString && ch === '\t') {
+        result += '\\t';
+      } else {
+        result += ch;
+      }
+      i++;
+    }
+    return result;
+  }
+
   // Try JSON.parse directly — this is the expected path now
   try {
-    const parsed = JSON.parse(cleaned);
+    const parsed = JSON.parse(fixLiteralNewlines(cleaned));
 
     // Extract files
     const files: { path: string; content: string }[] = [];
@@ -469,7 +495,7 @@ export async function runRalphLoop(
 
         const stream = anthropic.messages.stream({
           model: "claude-sonnet-4-6",
-          max_tokens: 3000,
+          max_tokens: 4096,
           system: TASK_SYSTEM_PROMPT,
           messages: [
             {
