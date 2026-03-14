@@ -2,6 +2,7 @@ import {
   createProjectSandbox,
   runCommandStreaming,
   getPreviewUrl,
+  extendSandboxTimeout,
 } from "@/lib/sandbox";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { runRalphLoop } from "@/lib/ralph";
@@ -108,6 +109,13 @@ export async function POST(request: Request) {
           sandbox,
           ({ event, data }) => send(event, data)
         );
+
+        // ── Extend sandbox so user has time to preview + edit ──
+        try {
+          await extendSandboxTimeout(sandbox, 10 * 60 * 1000);
+        } catch {
+          // best effort — sandbox may not support setTimeout
+        }
 
         // ── Start preview server ──
         send("agent_log", {

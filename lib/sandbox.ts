@@ -1,7 +1,7 @@
 import { Sandbox } from "e2b";
 
 /**
- * Creates an E2B sandbox with a 10-minute timeout.
+ * Creates an E2B sandbox with a 15-minute timeout.
  */
 export async function createProjectSandbox(): Promise<Sandbox> {
   if (!process.env.E2B_API_KEY) {
@@ -9,9 +9,19 @@ export async function createProjectSandbox(): Promise<Sandbox> {
   }
   const sandbox = await Sandbox.create({
     apiKey: process.env.E2B_API_KEY,
-    timeoutMs: 10 * 60 * 1000,
+    timeoutMs: 15 * 60 * 1000,
   });
   return sandbox;
+}
+
+/**
+ * Extend the sandbox timeout (e.g. after build completes, give user time to preview).
+ */
+export async function extendSandboxTimeout(
+  sandbox: Sandbox,
+  timeoutMs: number = 10 * 60 * 1000
+): Promise<void> {
+  await sandbox.setTimeout(timeoutMs);
 }
 
 /**
