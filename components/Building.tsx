@@ -30,6 +30,7 @@ export default function Building({
   const [sandboxId, setSandboxId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [showEdit, setShowEdit] = useState(false);
+  const [sandboxExpired, setSandboxExpired] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
   const [complete, setComplete] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -389,7 +390,7 @@ export default function Building({
       {complete && (
         <div className={`${budgetExceeded ? "bg-red-500" : "bg-accent"} text-bg text-center py-3 font-syne font-700 text-sm sm:text-base flex flex-wrap items-center justify-center gap-4 px-4`}>
           <span>{budgetExceeded ? "Budget limit reached" : "Your project is ready!"}</span>
-          {previewUrl && (
+          {previewUrl && !sandboxExpired && (
             <a
               href={previewUrl}
               target="_blank"
@@ -411,6 +412,11 @@ export default function Building({
                 />
               </svg>
             </a>
+          )}
+          {sandboxExpired && (
+            <span className="bg-bg/20 px-3 py-1 rounded-lg text-sm">
+              Preview expired
+            </span>
           )}
           {saved ? (
             <span className="bg-bg/20 px-3 py-1 rounded-lg text-sm">
@@ -676,7 +682,7 @@ export default function Building({
         </div>
 
         {/* Right panel: Edit Chat or Preview (desktop only) */}
-        {complete && sandboxId && !activeFile && (
+        {complete && sandboxId && !activeFile && !sandboxExpired && (
           <div className="hidden lg:flex lg:w-[380px] flex-shrink-0 border-l border-slate-800 flex-col">
             {showEdit ? (
               <EditChat
@@ -690,6 +696,7 @@ export default function Building({
                   ]);
                 }}
                 onPreviewRefresh={() => setIframeKey((k) => k + 1)}
+                onSandboxExpired={() => setSandboxExpired(true)}
               />
             ) : (
               <>

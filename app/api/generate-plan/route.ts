@@ -10,6 +10,8 @@ const SYSTEM_PROMPT = `You are a project planner. Break the user's description i
 2. Have binary verifiable success criteria — things that can be checked by reading the files
 3. Ordered by dependency — tasks that depend on earlier work get a higher order_index
 
+STRICT RULE: Each task creates or modifies exactly ONE file. A task that touches index.html must ONLY touch index.html. Never combine multiple files in one task. If unsure, make it smaller.
+
 IMPORTANT: Tasks that are independent of each other SHOULD share the same order_index so they can run in parallel. For example, creating HTML structure and creating CSS base styles can both be order_index 1 since they don't depend on each other. Only increase order_index when a task truly depends on a previous one.
 
 For each task return:

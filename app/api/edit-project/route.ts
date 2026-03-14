@@ -135,7 +135,18 @@ export async function POST(request: Request) {
       try {
         send("agent_log", { log: "Connecting to sandbox..." });
 
-        const sandbox = await reconnectSandbox(sandbox_id);
+        let sandbox;
+        try {
+          sandbox = await reconnectSandbox(sandbox_id);
+        } catch (connectErr) {
+          const msg = connectErr instanceof Error ? connectErr.message : String(connectErr);
+          if (msg.toLowerCase().includes("not found") || msg.toLowerCase().includes("404")) {
+            send("sandbox_expired", { error: "Sandbox has expired. Please rebuild the project to make further edits." });
+            controller.close();
+            return;
+          }
+          throw connectErr;
+        }
 
         send("agent_log", { log: "Reading current project files..." });
 

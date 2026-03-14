@@ -8,16 +8,19 @@ export default function EditChat({
   files,
   onFileUpdate,
   onPreviewRefresh,
+  onSandboxExpired,
 }: {
   sandboxId: string;
   files: FileEntry[];
   previewUrl?: string | null;
   onFileUpdate: (path: string, content: string) => void;
   onPreviewRefresh: () => void;
+  onSandboxExpired?: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sandboxExpired, setSandboxExpired] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -85,6 +88,10 @@ export default function EditChat({
               onPreviewRefresh();
             } else if (event === "edit_complete") {
               logLines.push(`Done: ${parsed.summary}`);
+            } else if (event === "sandbox_expired") {
+              setSandboxExpired(true);
+              onSandboxExpired?.();
+              logLines.push(parsed.error || "Sandbox has expired.");
             } else if (event === "edit_error") {
               logLines.push(`Error: ${parsed.error}`);
             }
@@ -173,29 +180,40 @@ export default function EditChat({
 
       {/* Input */}
       <div className="p-4 border-t border-slate-800">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSend();
-          }}
-          className="flex gap-2"
-        >
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Change the background to dark blue..."
-            disabled={loading}
-            className="flex-1 bg-surface border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-accent font-mono disabled:opacity-50"
-          />
-          <button
-            type="submit"
-            disabled={loading || !input.trim()}
-            className="bg-accent text-bg font-syne font-700 px-4 py-2 rounded-lg text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        {sandboxExpired ? (
+          <div className="text-center py-2">
+            <p className="text-red-400 text-xs font-mono mb-2">
+              Sandbox expired — edits are no longer available.
+            </p>
+            <p className="text-slate-500 text-xs font-mono">
+              Rebuild the project to make further changes.
+            </p>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSend();
+            }}
+            className="flex gap-2"
           >
-            Send
-          </button>
-        </form>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Change the background to dark blue..."
+              disabled={loading}
+              className="flex-1 bg-surface border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-accent font-mono disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              className="bg-accent text-bg font-syne font-700 px-4 py-2 rounded-lg text-sm hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Send
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );
