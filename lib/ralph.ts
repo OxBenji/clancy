@@ -432,9 +432,14 @@ export async function runRalphLoop(
           });
         }
 
+        // Filter out stale base64 guardrails — we use plain text now
+        const filteredGuardrails = (guardrails ?? []).filter(
+          (g) => !g.sign.toLowerCase().includes("base64")
+        );
+
         const guardrailsText =
-          guardrails && guardrails.length > 0
-            ? `\n\nGUARDRAILS (lessons from previous attempts — follow these):\n${guardrails
+          filteredGuardrails.length > 0
+            ? `\n\nGUARDRAILS (lessons from previous attempts — follow these):\n${filteredGuardrails
                 .map((g) => `- [${g.task_label}]: ${g.sign}`)
                 .join("\n")}`
             : "";
@@ -518,10 +523,14 @@ export async function runRalphLoop(
         }
 
         if (failReason) {
+          // Replace any base64 references — the model sometimes tries to base64 on its own
+          const cleanReason = failReason.toLowerCase().includes("base64")
+            ? "Use plain text for file content in JSON — do NOT base64 encode"
+            : failReason;
           await db.from("guardrails").insert({
             project_id: projectId,
             task_label: task.label,
-            sign: failReason,
+            sign: cleanReason,
           });
 
           emit({
