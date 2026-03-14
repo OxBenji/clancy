@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Image from "next/image";
 
 const TICKER_TEXT =
@@ -12,8 +13,30 @@ export default function Landing({
   onStart: () => void;
   onChat: () => void;
 }) {
+  const sectionsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = sectionsRef.current;
+    if (!el) return;
+    const targets = el.querySelectorAll("[data-animate]");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            (entry.target as HTMLElement).style.opacity = "1";
+            (entry.target as HTMLElement).style.transform = "translateY(0)";
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.15 }
+    );
+    targets.forEach((t) => observer.observe(t));
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen px-6">
+    <div ref={sectionsRef} className="flex flex-col items-center px-6 pt-24 sm:pt-32">
       {/* Hero — two-column on desktop, stacked on mobile */}
       <div className="relative flex flex-col lg:flex-row items-center gap-12 lg:gap-20 max-w-6xl w-full">
         {/* Left: text */}
@@ -90,32 +113,112 @@ export default function Landing({
       </div>
 
       {/* Features */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 mt-16 max-w-4xl w-full">
-        {[
-          {
-            title: "Describe",
-            desc: "Type what you want in plain English. No PRD. No technical knowledge needed.",
-          },
-          {
-            title: "Plan",
-            desc: "Clancy breaks it into 5\u201310 concrete tasks in seconds. You review the plan before it starts.",
-          },
-          {
-            title: "Ship",
-            desc: "The agent writes real code in a sandbox. You watch live. You get a working preview URL.",
-          },
-        ].map((f) => (
-          <div key={f.title} className="bg-surface rounded-xl p-6 text-left">
-            <h3 className="font-syne font-700 text-accent text-xl mb-2">
-              {f.title}
-            </h3>
-            <p className="text-slate-400 text-sm leading-relaxed">{f.desc}</p>
-          </div>
-        ))}
-      </div>
+      <section id="features" data-animate className="w-full max-w-4xl mt-16" style={{ opacity: 0, transform: "translateY(24px)", transition: "opacity 0.6s ease-out, transform 0.6s ease-out" }}>
+        <h2 className="font-syne font-700 text-2xl sm:text-3xl text-center mb-10">
+          How it works
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
+          {[
+            {
+              icon: "💬",
+              title: "Describe",
+              desc: "Type what you want in plain English. No PRD. No technical knowledge needed.",
+            },
+            {
+              icon: "📋",
+              title: "Plan",
+              desc: "Clancy breaks it into 5\u201310 concrete tasks in seconds. You review the plan before it starts.",
+            },
+            {
+              icon: "🚀",
+              title: "Ship",
+              desc: "The agent writes real code in a sandbox. You watch live. You get a working preview URL.",
+            },
+          ].map((f) => (
+            <div
+              key={f.title}
+              className="bg-surface rounded-xl p-6 text-left border border-transparent hover:border-accent/30 hover:shadow-[0_0_24px_rgba(79,255,176,0.06)] transition-all duration-300 group"
+            >
+              <span className="text-3xl mb-3 block">{f.icon}</span>
+              <h3 className="font-syne font-700 text-accent text-xl mb-2 group-hover:brightness-110 transition-all">
+                {f.title}
+              </h3>
+              <p className="text-slate-400 text-sm leading-relaxed">
+                {f.desc}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Testimonials */}
+      <section id="testimonials" data-animate className="w-full max-w-4xl mt-24" style={{ opacity: 0, transform: "translateY(24px)", transition: "opacity 0.6s ease-out 0.1s, transform 0.6s ease-out 0.1s" }}>
+        <h2 className="font-syne font-700 text-2xl sm:text-3xl text-center mb-10">
+          What builders are saying
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
+          {[
+            {
+              quote:
+                "I described a booking system in two sentences. Clancy had a working prototype in under 5 minutes.",
+              author: "Sarah K.",
+              role: "Freelance Designer",
+            },
+            {
+              quote:
+                "Watching the agent build in real time is wild. It feels like pair programming with a 10x engineer.",
+              author: "Marcus T.",
+              role: "Indie Hacker",
+            },
+            {
+              quote:
+                "I shipped 3 client landing pages in one afternoon. Clancy is an unfair advantage.",
+              author: "Priya R.",
+              role: "Agency Founder",
+            },
+          ].map((t) => (
+            <blockquote
+              key={t.author}
+              className="bg-surface rounded-xl p-6 border border-slate-800 hover:border-accent/20 transition-all duration-300 flex flex-col justify-between"
+            >
+              <p className="text-slate-300 text-sm leading-relaxed italic mb-6">
+                &ldquo;{t.quote}&rdquo;
+              </p>
+              <footer>
+                <p className="font-syne font-600 text-accent text-sm">
+                  {t.author}
+                </p>
+                <p className="text-slate-500 font-mono text-xs">{t.role}</p>
+              </footer>
+            </blockquote>
+          ))}
+        </div>
+      </section>
+
+      {/* CTA Footer */}
+      <section
+        id="cta"
+        data-animate
+        className="w-full max-w-2xl mt-24 mb-8 text-center bg-surface rounded-2xl p-10 sm:p-14 border border-slate-800"
+        style={{ opacity: 0, transform: "translateY(24px)", transition: "opacity 0.6s ease-out 0.2s, transform 0.6s ease-out 0.2s" }}
+      >
+        <h2 className="font-syne font-800 text-3xl sm:text-4xl mb-4">
+          Ready to build something?
+        </h2>
+        <p className="text-slate-400 mb-8 max-w-md mx-auto">
+          Go from idea to live project in minutes. No setup, no config, no
+          code&mdash;just describe what you want.
+        </p>
+        <button
+          onClick={onStart}
+          className="bg-accent text-bg font-syne font-700 text-lg px-10 py-4 rounded-xl hover:brightness-110 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+        >
+          Start Building — It&apos;s Free
+        </button>
+      </section>
 
       {/* Attribution footer */}
-      <div className="mt-16 pb-12 text-center">
+      <div className="mt-8 pb-12 text-center">
         <p className="text-slate-600 font-mono text-xs">
           Inspired by{" "}
           <a
