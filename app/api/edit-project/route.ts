@@ -162,6 +162,10 @@ export async function POST(request: Request) {
               role: "user",
               content: `Current project files:\n\n${fileContext}\n\nUser request: "${safeMessage}"`,
             },
+            {
+              role: "assistant",
+              content: "{",
+            },
           ],
         });
 
@@ -170,7 +174,8 @@ export async function POST(request: Request) {
           throw new Error("No response from AI");
         }
 
-        const action = parseResponse(textBlock.text);
+        // Prepend "{" since we used assistant prefill
+        const action = parseResponse("{" + textBlock.text);
         if (!action) {
           throw new Error("AI returned invalid format");
         }
