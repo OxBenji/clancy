@@ -97,18 +97,51 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
 
   // Extract files using regex — more forgiving than JSON.parse on the whole object
   const files: { path: string; content: string }[] = [];
-  const fileRegex = /\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([A-Za-z0-9+/=\s]+?)"\s*\}/g;
-  let match;
-  while ((match = fileRegex.exec(cleaned)) !== null) {
-    const path = match[1];
-    const b64Content = match[2].replace(/\s/g, "");
-    try {
-      const decoded = Buffer.from(b64Content, "base64").toString("utf-8");
-      if (decoded.length > 0) {
-        files.push({ path, content: decoded });
+
+  // Strategy 1: Try JSON.parse on the whole response first (handles both base64 and plain text)
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (parsed.files && Array.isArray(parsed.files)) {
+      for (const f of parsed.files) {
+        if (!f.path || !f.content) continue;
+        // Detect if content is base64 or plain text
+        const isBase64 = /^[A-Za-z0-9+/=\s]+$/.test(f.content) && f.content.length > 20;
+        if (isBase64) {
+          try {
+            const decoded = Buffer.from(f.content.replace(/\s/g, ""), "base64").toString("utf-8");
+            // Heuristic: valid base64 decodes to mostly printable chars
+            const printableRatio = decoded.replace(/[^\x20-\x7E\n\r\t]/g, "").length / decoded.length;
+            if (decoded.length > 0 && printableRatio > 0.9) {
+              files.push({ path: f.path, content: decoded });
+              continue;
+            }
+          } catch { /* fall through to plain text */ }
+        }
+        // Plain text content (model didn't base64 encode)
+        if (typeof f.content === "string" && f.content.length > 0) {
+          files.push({ path: f.path, content: f.content });
+        }
       }
-    } catch {
-      // skip files that fail to decode
+    }
+  } catch {
+    // JSON.parse failed — fall back to regex extraction
+  }
+
+  // Strategy 2: Regex fallback for base64 content (original approach)
+  if (files.length === 0) {
+    const fileRegex = /\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([A-Za-z0-9+/=\s]+?)"\s*\}/g;
+    let match;
+    while ((match = fileRegex.exec(cleaned)) !== null) {
+      const path = match[1];
+      const b64Content = match[2].replace(/\s/g, "");
+      try {
+        const decoded = Buffer.from(b64Content, "base64").toString("utf-8");
+        if (decoded.length > 0) {
+          files.push({ path, content: decoded });
+        }
+      } catch {
+        // skip files that fail to decode
+      }
     }
   }
 
@@ -520,9 +553,9 @@ export async function runRalphLoop(
             ],
           });
 
-          // 90-second timeout on the API call
+          // 180-second timeout on the API call
           const timeout = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Claude API call timed out after 90s")), 90_000)
+            setTimeout(() => reject(new Error("Claude API call timed out after 180s")), 180_000)
           );
 
           response = await Promise.race([apiPromise, timeout]);
