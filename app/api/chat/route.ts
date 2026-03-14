@@ -2,6 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { rateLimit, getRequestIP } from "@/lib/rate-limit";
 import { validateMessages } from "@/lib/sanitize";
 
+export const maxDuration = 60;
+
 const CHAT_SYSTEM_PROMPT = `You are Clancy, a friendly and knowledgeable coding assistant. You help users with programming questions, debugging, code reviews, and technical guidance.
 
 Guidelines:

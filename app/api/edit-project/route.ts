@@ -10,6 +10,8 @@ import {
 import { rateLimit, getRequestIP } from "@/lib/rate-limit";
 import { clampString } from "@/lib/sanitize";
 
+export const maxDuration = 120;
+
 const EDIT_SYSTEM_PROMPT = `You are an AI assistant helping edit an existing web project in a sandbox. The user will request changes. You can read existing files and modify them.
 
 RESPONSE FORMAT:

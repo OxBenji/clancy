@@ -3,6 +3,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { rateLimit, getRequestIP } from "@/lib/rate-limit";
 import { validateDescription } from "@/lib/sanitize";
 
+export const maxDuration = 30;
+
 const SYSTEM_PROMPT = `You are a project planner. Break the user's description into 5-8 tasks. Each task must be:
 1. Small enough to complete in one context window
 2. Have binary verifiable success criteria — things that can be checked by reading the files

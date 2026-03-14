@@ -9,6 +9,9 @@ import { rateLimit, getRequestIP } from "@/lib/rate-limit";
 import { validateDescription, clampString } from "@/lib/sanitize";
 import type { RalphTask } from "@/lib/ralph";
 
+// Allow up to 5 minutes for the full build loop on Vercel
+export const maxDuration = 300;
+
 interface TaskInput {
   id: string;
   label: string;

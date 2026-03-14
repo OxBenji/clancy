@@ -416,18 +416,36 @@ export async function runRalphLoop(
           ? `\n\nSUCCESS CRITERIA (your output MUST satisfy all of these):\n${task.success_criteria!.map((c, i) => `${i + 1}. ${c}`).join("\n")}`
           : "";
 
-        // ── Fresh Anthropic API call ──
-        const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 16384,
-          system: TASK_SYSTEM_PROMPT,
-          messages: [
-            {
-              role: "user",
-              content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${criteriaText}${previousContext}${guardrailsText}\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
-            },
-          ],
+        // ── Fresh Anthropic API call (with heartbeat so UI doesn't look stuck) ──
+        emit({
+          event: "agent_log",
+          data: { task_id: task.id, log: "Generating code..." },
         });
+
+        // Heartbeat: send a dot every 5s while waiting for Claude
+        const heartbeat = setInterval(() => {
+          emit({
+            event: "agent_log",
+            data: { task_id: task.id, log: "..." },
+          });
+        }, 5000);
+
+        let response;
+        try {
+          response = await anthropic.messages.create({
+            model: "claude-sonnet-4-6",
+            max_tokens: 16384,
+            system: TASK_SYSTEM_PROMPT,
+            messages: [
+              {
+                role: "user",
+                content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${criteriaText}${previousContext}${guardrailsText}\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
+              },
+            ],
+          });
+        } finally {
+          clearInterval(heartbeat);
+        }
 
         // ── Track cost ──
         const inputTokens = response.usage?.input_tokens ?? 0;
