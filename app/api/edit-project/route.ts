@@ -171,7 +171,7 @@ export async function POST(request: Request) {
           messages: [
             {
               role: "user",
-              content: `Current project files:\n\n${fileContext}\n\nUser request: "${safeMessage}"\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
+              content: `Current project files:\n\n${fileContext}\n\nUser request: "${safeMessage}"\n\nRespond with ONLY the JSON object. Use plain text for file content (NOT base64).`,
             },
           ],
         });
