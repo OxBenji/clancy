@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { rateLimit, getRequestIP } from "@/lib/rate-limit";
+import { validateDescription } from "@/lib/sanitize";
 
 const SYSTEM_PROMPT = `You are a project planner for a software builder tool. The user will describe something they want built. Break it into 5-10 concrete, small, buildable tasks. Each task must be specific and verifiable — not vague. Return ONLY a valid JSON array, no markdown, no explanation. Each item has: label (string), estimated_seconds (number between 15 and 60), order_index (number starting at 1)`;
 
@@ -12,7 +14,7 @@ interface RawTask {
 function validateTasks(
   raw: unknown
 ): { label: string; estimated_seconds: number; order_index: number }[] | null {
-  if (!Array.isArray(raw) || raw.length === 0) return null;
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 20) return null;
 
   const validated = [];
   for (const item of raw as RawTask[]) {
@@ -24,7 +26,7 @@ function validateTasks(
       return null;
     }
     validated.push({
-      label: item.label,
+      label: item.label.slice(0, 200),
       estimated_seconds: Math.max(15, Math.min(60, item.estimated_seconds)),
       order_index: item.order_index,
     });
@@ -34,7 +36,17 @@ function validateTasks(
 }
 
 export async function POST(request: Request) {
-  let body: { description?: string };
+  // Rate limit: 10 requests per IP per minute
+  const ip = getRequestIP(request);
+  const rl = rateLimit(`generate-plan:${ip}`, { maxRequests: 10, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before trying again." },
+      { status: 429 }
+    );
+  }
+
+  let body: { description?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -44,17 +56,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const { description } = body;
-
-  if (
-    !description ||
-    typeof description !== "string" ||
-    description.trim().length < 10
-  ) {
-    return NextResponse.json(
-      { error: "description is required and must be at least 10 characters" },
-      { status: 400 }
-    );
+  const descResult = validateDescription(body.description);
+  if (!descResult.valid) {
+    return NextResponse.json({ error: descResult.error }, { status: 400 });
   }
 
   try {
@@ -64,7 +68,7 @@ export async function POST(request: Request) {
       model: "claude-sonnet-4-6",
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: description.trim() }],
+      messages: [{ role: "user", content: descResult.value }],
     });
 
     const textBlock = message.content.find((block) => block.type === "text");

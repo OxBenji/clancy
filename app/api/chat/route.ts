@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { rateLimit, getRequestIP } from "@/lib/rate-limit";
+import { validateMessages } from "@/lib/sanitize";
 
 const CHAT_SYSTEM_PROMPT = `You are Clancy, a friendly and knowledgeable coding assistant. You help users with programming questions, debugging, code reviews, and technical guidance.
 
@@ -12,9 +14,16 @@ Guidelines:
 - If a question is vague, ask a clarifying question`;
 
 export async function POST(request: Request) {
-  let body: {
-    messages?: { role: "user" | "assistant"; content: string }[];
-  };
+  const ip = getRequestIP(request);
+  const rl = rateLimit(`chat:${ip}`, { maxRequests: 20, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return new Response(JSON.stringify({ error: "Too many requests" }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  let body: { messages?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -24,13 +33,12 @@ export async function POST(request: Request) {
     });
   }
 
-  const { messages } = body;
-
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return new Response(
-      JSON.stringify({ error: "messages array is required" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
+  const msgResult = validateMessages(body.messages);
+  if (!msgResult.valid) {
+    return new Response(JSON.stringify({ error: msgResult.error }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   try {
@@ -40,10 +48,7 @@ export async function POST(request: Request) {
       model: "claude-sonnet-4-6",
       max_tokens: 2048,
       system: CHAT_SYSTEM_PROMPT,
-      messages: messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
+      messages: msgResult.value,
     });
 
     const readableStream = new ReadableStream({
