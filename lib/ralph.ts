@@ -231,11 +231,14 @@ async function verifyCriteria(
   sandbox: Sandbox,
   criteria: string[],
   emit: (event: RalphEvent) => void,
-  taskId: string
+  taskId: string,
+  fallbackFiles: Record<string, string> = {}
 ): Promise<{ passed: boolean; failures: string[]; fileContents: Record<string, string> }> {
   const failures: string[] = [];
 
-  const fileContents = await readAllProjectFiles(sandbox);
+  const sandboxFiles = await readAllProjectFiles(sandbox);
+  // Merge: sandbox files take precedence, but fallback fills gaps (e.g. during parallel execution race conditions)
+  const fileContents = { ...fallbackFiles, ...sandboxFiles };
   if (Object.keys(fileContents).length === 0) {
     return { passed: false, failures: ["Could not read project files"], fileContents };
   }
@@ -702,11 +705,21 @@ export async function runRalphLoop(
             data: { task_id: task.id, log: "Verifying success criteria..." },
           });
 
+          // Build a fallback map from the files we just wrote (avoids empty reads during parallel execution)
+          const writtenFiles: Record<string, string> = {};
+          if (action.files) {
+            for (const f of action.files) {
+              const shortPath = f.path.replace("/home/user/project/", "");
+              writtenFiles[shortPath] = f.content;
+            }
+          }
+
           const { passed, failures, fileContents: verifyContents } = await verifyCriteria(
             sandbox,
             task.success_criteria!,
             emit,
-            task.id
+            task.id,
+            writtenFiles
           );
 
           if (!passed) {
