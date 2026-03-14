@@ -70,29 +70,22 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
     }
   }
 
-  // Extract JSON (strip promise tags and code fences)
+  // Strip promise tags and code fences
   let jsonText = text
     .replace(/<promise>[\s\S]*?<\/promise>/g, "")
     .trim();
 
-  if (jsonText.startsWith("```")) {
-    jsonText = jsonText
-      .replace(/^```(?:json)?\s*\n?/, "")
-      .replace(/\n?\s*```$/, "");
-  }
+  // Remove markdown code fences (```json ... ``` or ``` ... ```)
+  jsonText = jsonText.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
 
   let action: AgentAction | null = null;
+
+  // Attempt 1: direct parse
   try {
     action = JSON.parse(jsonText);
   } catch {
-    const match = jsonText.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        action = JSON.parse(match[0]);
-      } catch {
-        // Could not parse
-      }
-    }
+    // Attempt 2: find JSON by matching balanced braces
+    action = extractBalancedJson(jsonText);
   }
 
   // If we got a valid action with files, consider it complete even without the tag
@@ -101,6 +94,51 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
   }
 
   return { action, complete, failReason };
+}
+
+/** Extract the first balanced JSON object from text with nested braces. */
+function extractBalancedJson(text: string): AgentAction | null {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      escape = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 function calculateCost(inputTokens: number, outputTokens: number): number {
