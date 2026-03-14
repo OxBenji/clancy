@@ -12,52 +12,78 @@ import { clampString } from "@/lib/sanitize";
 
 const EDIT_SYSTEM_PROMPT = `You are an AI assistant helping edit an existing web project in a sandbox. The user will request changes. You can read existing files and modify them.
 
-Output a JSON object with this structure:
-{"files":[{"path":"/home/user/project/filename","content":"full updated file content"}],"commands":[],"summary":"One-line description of what you changed"}
+RESPONSE FORMAT:
+Return your response as a JSON object where each file's content field is BASE64 ENCODED.
 
-Rules:
+{"files":[{"path":"/home/user/project/filename","content":"BASE64_ENCODED_CONTENT"}],"commands":[],"summary":"One-line description of what you changed","status":"complete"}
+
+CRITICAL RULES FOR BASE64:
+- The "content" field of each file MUST be the base64-encoded version of the file content
+- The "path" field is plain text (NOT base64)
+- The "summary" field is plain text (NOT base64)
+- The "commands" array contains plain text commands (NOT base64)
+- ONLY the file content values are base64 encoded
+
+Other rules:
 - All file paths must be absolute under /home/user/project/
-- When modifying a file, output the COMPLETE updated content, not just the diff
+- When modifying a file, output the COMPLETE updated content (base64 encoded), not just the diff
 - Only include files that need changes
 - Keep the project working after your changes
-- RESPOND WITH ONLY RAW JSON. Any non-JSON text will cause a system error.`;
+- RESPOND WITH ONLY THE JSON OBJECT — no markdown fences, no extra text`;
 
 interface EditAction {
-  files?: { path: string; content: string }[];
-  commands?: string[];
-  summary?: string;
+  files: { path: string; content: string }[];
+  commands: string[];
+  summary: string;
 }
 
 function parseResponse(text: string): EditAction | null {
-  let jsonText = text.trim();
-  // Strip code fences
-  jsonText = jsonText.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
 
-  try {
-    return JSON.parse(jsonText);
-  } catch {
-    // Extract first balanced JSON object
-    const start = jsonText.indexOf("{");
-    if (start === -1) return null;
-    let depth = 0;
-    let inStr = false;
-    let esc = false;
-    for (let i = start; i < jsonText.length; i++) {
-      const ch = jsonText[i];
-      if (esc) { esc = false; continue; }
-      if (ch === "\\") { esc = true; continue; }
-      if (ch === '"') { inStr = !inStr; continue; }
-      if (inStr) continue;
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          try { return JSON.parse(jsonText.slice(start, i + 1)); } catch { return null; }
-        }
+  const files: { path: string; content: string }[] = [];
+  const fileRegex = /\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([A-Za-z0-9+/=\s]+?)"\s*\}/g;
+  let match;
+  while ((match = fileRegex.exec(cleaned)) !== null) {
+    const path = match[1];
+    const b64Content = match[2].replace(/\s/g, "");
+    try {
+      const decoded = Buffer.from(b64Content, "base64").toString("utf-8");
+      if (decoded.length > 0) {
+        files.push({ path, content: decoded });
       }
+    } catch {
+      // skip files that fail to decode
     }
+  }
+
+  const commands: string[] = [];
+  const cmdRegex = /"commands"\s*:\s*\[([\s\S]*?)\]/;
+  const cmdMatch = cleaned.match(cmdRegex);
+  if (cmdMatch) {
+    const cmdArray = cmdMatch[1];
+    const cmdItemRegex = /"((?:[^"\\]|\\.)*)"/g;
+    let cm;
+    while ((cm = cmdItemRegex.exec(cmdArray)) !== null) {
+      commands.push(cm[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
+    }
+  }
+
+  let summary = "";
+  const summaryMatch = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (summaryMatch) {
+    summary = summaryMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+
+  if (files.length === 0 && commands.length === 0) {
     return null;
   }
+
+  if (!summary && files.length > 0) {
+    summary = `Updated ${files.length} file(s)`;
+  }
+
+  return { files, commands, summary };
 }
 
 export async function POST(request: Request) {
@@ -165,12 +191,12 @@ export async function POST(request: Request) {
 
         const response = await anthropic.messages.create({
           model: "claude-sonnet-4-6",
-          max_tokens: 4096,
+          max_tokens: 16384,
           system: EDIT_SYSTEM_PROMPT,
           messages: [
             {
               role: "user",
-              content: `Current project files:\n\n${fileContext}\n\nUser request: "${safeMessage}"\n\nRespond with ONLY a JSON object. Start your response with { character.`,
+              content: `Current project files:\n\n${fileContext}\n\nUser request: "${safeMessage}"\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
             },
           ],
         });
@@ -182,18 +208,17 @@ export async function POST(request: Request) {
 
         const action = parseResponse(textBlock.text);
         if (!action) {
-          throw new Error("AI returned invalid format");
+          throw new Error("AI returned no files or commands");
         }
 
         // Apply file changes
-        if (action.files && action.files.length > 0) {
-          const validFiles = action.files.filter((f) => f.path && f.content);
+        if (action.files.length > 0) {
           await writeFiles(
             sandbox,
-            validFiles.map((f) => ({ path: f.path, data: f.content }))
+            action.files.map((f) => ({ path: f.path, data: f.content }))
           );
 
-          for (const file of validFiles) {
+          for (const file of action.files) {
             const shortPath = file.path.replace("/home/user/project/", "");
             send("file_updated", { path: shortPath, content: file.content });
             send("agent_log", { log: `Updated ${shortPath}` });
@@ -201,7 +226,7 @@ export async function POST(request: Request) {
         }
 
         // Run any commands
-        if (action.commands && action.commands.length > 0) {
+        if (action.commands.length > 0) {
           for (const cmd of action.commands.slice(0, 5)) {
             send("agent_log", { log: `$ ${cmd}` });
             try {

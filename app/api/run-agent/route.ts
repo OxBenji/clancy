@@ -13,6 +13,7 @@ interface TaskInput {
   id: string;
   label: string;
   order_index: number;
+  success_criteria?: string[];
 }
 
 function sseEvent(event: string, data: Record<string, unknown>): string {
@@ -60,11 +61,12 @@ export async function POST(request: Request) {
   const descResult = validateDescription(description ?? "A web project");
   const safeDescription = descResult.valid ? descResult.value : "A web project";
 
-  // Validate task labels
+  // Validate task labels + pass through success_criteria
   const ralphTasks: RalphTask[] = tasks.map((t) => ({
     id: t.id,
     label: clampString(t.label || "", 200),
     order_index: t.order_index,
+    success_criteria: Array.isArray(t.success_criteria) ? t.success_criteria : undefined,
   }));
 
   const stream = new ReadableStream({
@@ -109,13 +111,9 @@ export async function POST(request: Request) {
           log: "Starting preview server...",
         });
 
-        try {
-          // Always use python3 http.server — it's guaranteed available in E2B
-          send("agent_log", {
-            task_id: "system",
-            log: "Starting preview server (python3)...",
-          });
+        let previewUrl: string | null = null;
 
+        try {
           await runCommandStreaming(
             sandbox,
             "cd /home/user/project && python3 -m http.server 3000 &",
@@ -124,30 +122,93 @@ export async function POST(request: Request) {
 
           // Give server a moment to bind
           await new Promise((r) => setTimeout(r, 2000));
+          previewUrl = getPreviewUrl(sandbox, 3000);
+        } catch {
+          // Even if the server command "fails" (background process), still try the URL
+          try {
+            previewUrl = getPreviewUrl(sandbox, 3000);
+          } catch {
+            // no preview available
+          }
+        }
 
-          const previewUrl = getPreviewUrl(sandbox, 3000);
+        // ── Auto-heal: check if preview is reachable ──
+        if (previewUrl) {
+          let previewHealthy = false;
+
+          try {
+            const healthCheck = await runCommandStreaming(
+              sandbox,
+              `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/`,
+              { timeoutMs: 10_000 }
+            );
+            previewHealthy = healthCheck.stdout.trim() === "200";
+          } catch {
+            previewHealthy = false;
+          }
+
+          if (!previewHealthy) {
+            send("agent_log", {
+              task_id: "system",
+              log: "Preview health check failed — running auto-heal...",
+            });
+
+            // Run one more Ralph iteration to fix deployment
+            const healTask: RalphTask = {
+              id: crypto.randomUUID(),
+              label: "Fix preview server: ensure index.html exists at /home/user/project/index.html and the python3 http.server can serve it on port 3000. Check for missing files or syntax errors.",
+              order_index: 99,
+              success_criteria: ["index.html contains <!DOCTYPE html>", "index.html contains </html>"],
+            };
+
+            await runRalphLoop(
+              project_id,
+              safeDescription,
+              [healTask],
+              sandbox,
+              ({ event, data }) => send(event, data)
+            );
+
+            // Restart preview server after heal
+            try {
+              await runCommandStreaming(sandbox, "pkill -f 'python3 -m http.server' || true", { timeoutMs: 5_000 });
+              await runCommandStreaming(
+                sandbox,
+                "cd /home/user/project && python3 -m http.server 3000 &",
+                { timeoutMs: 5_000 }
+              );
+              await new Promise((r) => setTimeout(r, 2000));
+            } catch {
+              // best effort
+            }
+
+            // Re-check
+            try {
+              const recheck = await runCommandStreaming(
+                sandbox,
+                `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/`,
+                { timeoutMs: 10_000 }
+              );
+              if (recheck.stdout.trim() === "200") {
+                send("agent_log", { task_id: "system", log: "Auto-heal successful — preview is live" });
+              } else {
+                send("agent_log", { task_id: "system", log: "Auto-heal attempted but preview may still have issues" });
+              }
+            } catch {
+              send("agent_log", { task_id: "system", log: "Could not verify preview after heal" });
+            }
+          }
+
           send("preview_url", { url: previewUrl });
           send("agent_log", {
             task_id: "system",
             log: `Preview: ${previewUrl}`,
           });
-        } catch (previewErr) {
-          // Even if the server command "fails" (background process), still try the URL
-          try {
-            const previewUrl = getPreviewUrl(sandbox, 3000);
-            send("preview_url", { url: previewUrl });
-            send("agent_log", {
-              task_id: "system",
-              log: `Preview: ${previewUrl}`,
-            });
-          } catch {
-            const msg =
-              previewErr instanceof Error ? previewErr.message : "Unknown error";
-            send("agent_log", {
-              task_id: "system",
-              log: `Could not start preview: ${msg}`,
-            });
-          }
+        } else {
+          send("agent_log", {
+            task_id: "system",
+            log: "Could not start preview server",
+          });
         }
 
         const db = getSupabaseAdmin();
