@@ -12,3 +12,8 @@ export interface LogEntry {
   text: string;
   ts: number;
 }
+
+export interface FileEntry {
+  path: string;
+  content: string;
+}

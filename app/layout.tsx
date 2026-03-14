@@ -15,9 +15,25 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Clancy",
+  title: "Clancy — Describe it. Watch it build. Get a live link.",
   description:
-    "Autonomous AI agent loop for non-developers. Ralph loops. Clancy ships.",
+    "Autonomous AI agent that builds working projects from plain English descriptions. No code required.",
+  metadataBase: new URL("https://clancy-ebon.vercel.app"),
+  openGraph: {
+    title: "Clancy — Describe it. Watch it build. Get a live link.",
+    description:
+      "Autonomous AI agent that builds working projects from plain English descriptions. No code required.",
+    url: "https://clancy-ebon.vercel.app",
+    siteName: "Clancy",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Clancy — Describe it. Watch it build. Get a live link.",
+    description:
+      "Autonomous AI agent that builds working projects from plain English descriptions. No code required.",
+    creator: "@BenjiShips",
+  },
 };
 
 export default function RootLayout({
