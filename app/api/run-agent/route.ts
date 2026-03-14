@@ -7,18 +7,12 @@ import {
   getPreviewUrl,
 } from "@/lib/sandbox";
 
-const SYSTEM_PROMPT = `You are an autonomous software agent building a web project inside a Linux sandbox. You have access to the filesystem and shell.
+const SYSTEM_PROMPT = `You are an autonomous software agent building a web project inside a Linux sandbox.
 
-For each task, output a JSON object with exactly this structure:
-{
-  "files": [
-    { "path": "/home/user/project/filename", "content": "file content here" }
-  ],
-  "commands": [
-    "cd /home/user/project && npm install"
-  ],
-  "summary": "One-line description of what you did"
-}
+CRITICAL: Your response must be a single valid JSON object — nothing else. No markdown, no explanation, no code fences, no text before or after the JSON.
+
+Required JSON format:
+{"files":[{"path":"/home/user/project/filename","content":"file content"}],"commands":["cd /home/user/project && npm install"],"summary":"One-line description"}
 
 Rules:
 - All file paths must be absolute, under /home/user/project/
@@ -28,7 +22,7 @@ Rules:
 - Include an index.html as the entry point
 - Keep files small and focused
 - Commands run in a Linux environment with Node.js, npm, and Python available
-- Return ONLY the JSON object, no markdown, no explanation`;
+- RESPOND WITH ONLY RAW JSON. Any non-JSON text will cause a system error.`;
 
 interface Task {
   id: string;
@@ -337,13 +331,13 @@ export async function POST(request: Request) {
             });
             await runCommandStreaming(
               sandbox,
-              "cd /home/user/project && nohup npm run dev -- --port 3000 > /tmp/server.log 2>&1 &",
-              { timeoutMs: 10_000 }
+              "cd /home/user/project && npm run dev -- --port 3000",
+              { background: true, timeoutMs: 10_000 }
             ).catch(() =>
               runCommandStreaming(
                 sandbox,
-                "cd /home/user/project && nohup npm start > /tmp/server.log 2>&1 &",
-                { timeoutMs: 10_000 }
+                "cd /home/user/project && npm start",
+                { background: true, timeoutMs: 10_000 }
               )
             );
           } else {
@@ -351,20 +345,26 @@ export async function POST(request: Request) {
               task_id: "system",
               log: "Starting static file server...",
             });
+            // Install serve first, then run it in background
             await runCommandStreaming(
               sandbox,
-              "cd /home/user/project && nohup npx -y serve -l 3000 > /tmp/server.log 2>&1 &",
+              "cd /home/user/project && npm install -g serve",
               { timeoutMs: 30_000 }
+            ).catch(() => {});
+            await runCommandStreaming(
+              sandbox,
+              "cd /home/user/project && serve -l 3000",
+              { background: true, timeoutMs: 10_000 }
             ).catch(() =>
               runCommandStreaming(
                 sandbox,
-                "cd /home/user/project && nohup python3 -m http.server 3000 > /tmp/server.log 2>&1 &",
-                { timeoutMs: 10_000 }
+                "cd /home/user/project && python3 -m http.server 3000",
+                { background: true, timeoutMs: 10_000 }
               )
             );
           }
 
-          // Wait for server to start
+          // Wait for server to bind
           await new Promise((r) => setTimeout(r, 3000));
 
           const previewUrl = getPreviewUrl(sandbox, 3000);
