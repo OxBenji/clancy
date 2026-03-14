@@ -438,7 +438,7 @@ export async function runRalphLoop(
 
         // Filter out stale base64 guardrails — we use plain text now
         const filteredGuardrails = (guardrails ?? []).filter(
-          (g) => !g.sign.toLowerCase().includes("base64")
+          (g) => !(g.sign as string).toLowerCase().includes("base64")
         );
 
         const guardrailsText =
