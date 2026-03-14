@@ -286,7 +286,9 @@ function verifyCriteriaLocally(
         continue;
       }
 
-      if (content.toLowerCase().includes(needle.toLowerCase())) {
+      // Normalize HTML quotes (single ↔ double) so class='x' matches class="x"
+      const normalize = (s: string) => s.toLowerCase().replace(/['"]/g, '"');
+      if (normalize(content).includes(normalize(needle))) {
         emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} contains "${needle.slice(0, 40)}"` } });
       } else {
         failures.push(`${targetFile} missing: ${needle}`);
