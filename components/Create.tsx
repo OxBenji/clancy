@@ -10,11 +10,13 @@ function uid(): string {
 export default function Create({
   onPlan,
   onBack,
+  initialDescription = "",
 }: {
   onPlan: (description: string, tasks: PlanTask[]) => void;
   onBack: () => void;
+  initialDescription?: string;
 }) {
-  const [desc, setDesc] = useState("");
+  const [desc, setDesc] = useState(initialDescription);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 

@@ -5,7 +5,13 @@ import Image from "next/image";
 const TICKER_TEXT =
   "landing page \u00b7 telegram bot \u00b7 portfolio site \u00b7 saas tool \u00b7 chrome extension \u00b7 bakery website \u00b7 booking system \u00b7 waitlist page \u00b7 link in bio \u00b7 discord bot";
 
-export default function Landing({ onStart }: { onStart: () => void }) {
+export default function Landing({
+  onStart,
+  onChat,
+}: {
+  onStart: () => void;
+  onChat: () => void;
+}) {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen px-6">
       {/* Hero — two-column on desktop, stacked on mobile */}
@@ -19,18 +25,27 @@ export default function Landing({ onStart }: { onStart: () => void }) {
             Describe&nbsp;it. Watch&nbsp;it&nbsp;build. Get&nbsp;a&nbsp;live&nbsp;link.
           </h1>
           <p className="text-slate-400 max-w-xl mb-10 text-lg mx-auto lg:mx-0">
-            Tell Clancy what you want. An autonomous AI agent breaks it into tasks,
-            executes them one by one, and ships a working project — while you watch
-            every step in real time.
+            Tell Clancy what you want. An autonomous AI agent breaks it into
+            tasks, executes them in a real sandbox, and ships a working project
+            — while you watch every step in real time.
           </p>
-          <button
-            onClick={onStart}
-            className="bg-accent text-bg font-syne font-700 text-lg px-8 py-4 rounded-xl hover:brightness-110 transition-all"
-          >
-            Start Building
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3 items-center lg:items-start">
+            <button
+              onClick={onStart}
+              className="bg-accent text-bg font-syne font-700 text-lg px-8 py-4 rounded-xl hover:brightness-110 transition-all"
+            >
+              Start Building
+            </button>
+            <button
+              onClick={onChat}
+              className="border border-slate-700 text-slate-300 font-syne font-600 text-lg px-8 py-4 rounded-xl hover:border-accent hover:text-accent transition-all"
+            >
+              Coding Assistant
+            </button>
+          </div>
           <p className="text-slate-600 font-mono text-xs mt-4">
-            Free during beta &middot; No credit card &middot; Built by @BenjiShips
+            Free during beta &middot; No credit card &middot; Built by
+            @BenjiShips
           </p>
         </div>
 
@@ -67,14 +82,15 @@ export default function Landing({ onStart }: { onStart: () => void }) {
               key={i}
               className="text-slate-500 font-mono text-sm tracking-wide px-4"
             >
-              {TICKER_TEXT} &nbsp;&middot;&nbsp; {TICKER_TEXT} &nbsp;&middot;&nbsp;
+              {TICKER_TEXT} &nbsp;&middot;&nbsp; {TICKER_TEXT}{" "}
+              &nbsp;&middot;&nbsp;
             </span>
           ))}
         </div>
       </div>
 
       {/* Features */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 mt-16 max-w-4xl w-full pb-20">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 mt-16 max-w-4xl w-full">
         {[
           {
             title: "Describe",
@@ -82,11 +98,11 @@ export default function Landing({ onStart }: { onStart: () => void }) {
           },
           {
             title: "Plan",
-            desc: "Clancy breaks it into 5\u201310 concrete tasks in seconds. You see the full plan before it starts.",
+            desc: "Clancy breaks it into 5\u201310 concrete tasks in seconds. You review the plan before it starts.",
           },
           {
             title: "Ship",
-            desc: "The agent executes every task live. You watch. You get a real deployed URL.",
+            desc: "The agent writes real code in a sandbox. You watch live. You get a working preview URL.",
           },
         ].map((f) => (
           <div key={f.title} className="bg-surface rounded-xl p-6 text-left">
@@ -96,6 +112,22 @@ export default function Landing({ onStart }: { onStart: () => void }) {
             <p className="text-slate-400 text-sm leading-relaxed">{f.desc}</p>
           </div>
         ))}
+      </div>
+
+      {/* Attribution footer */}
+      <div className="mt-16 pb-12 text-center">
+        <p className="text-slate-600 font-mono text-xs">
+          Inspired by{" "}
+          <a
+            href="https://ralph.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-slate-400 hover:text-accent transition-colors"
+          >
+            Ralph
+          </a>{" "}
+          by @AidenBai &middot; Built with love by @BenjiShips
+        </p>
       </div>
     </div>
   );

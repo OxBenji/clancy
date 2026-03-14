@@ -17,3 +17,9 @@ export interface FileEntry {
   path: string;
   content: string;
 }
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  ts: number;
+}

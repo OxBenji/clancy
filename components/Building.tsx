@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import EditChat from "@/components/EditChat";
 import type { PlanTask, LogEntry, FileEntry } from "@/lib/types";
 
 type MobilePanel = "tasks" | "log" | "files";
@@ -21,7 +22,10 @@ export default function Building({
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [sandboxId, setSandboxId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [showEdit, setShowEdit] = useState(false);
+  const [iframeKey, setIframeKey] = useState(0);
   const [complete, setComplete] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -64,6 +68,7 @@ export default function Building({
         message?: string;
         error?: string;
         url?: string;
+        id?: string;
         path?: string;
         content?: string;
       }
@@ -131,6 +136,10 @@ export default function Building({
             ...prev.filter((f) => f.path !== data.path),
             { path: data.path!, content: data.content! },
           ]);
+          break;
+
+        case "sandbox_id":
+          setSandboxId(data.id as string);
           break;
 
         case "preview_url":
@@ -534,27 +543,86 @@ export default function Building({
           </div>
         </div>
 
-        {/* Right: Preview iframe (desktop only, shown when URL available) */}
-        {previewUrl && !activeFile && (
-          <div className="hidden lg:flex lg:w-[480px] flex-shrink-0 border-l border-slate-800 flex-col">
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-              <div>
-                <h3 className="font-syne font-700 text-sm">Live Preview</h3>
-                <p className="text-slate-500 text-xs font-mono truncate max-w-[300px]">
-                  {previewUrl}
-                </p>
-              </div>
-              <a
-                href={previewUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent text-xs font-mono hover:underline"
-              >
-                Open
-              </a>
+        {/* Right panel: Edit Chat or Preview (desktop only) */}
+        {complete && sandboxId && !activeFile && (
+          <div className="hidden lg:flex lg:w-[380px] flex-shrink-0 border-l border-slate-800 flex-col">
+            {showEdit ? (
+              <EditChat
+                sandboxId={sandboxId}
+                files={files}
+                previewUrl={previewUrl}
+                onFileUpdate={(path, content) => {
+                  setFiles((prev) => [
+                    ...prev.filter((f) => f.path !== path),
+                    { path, content },
+                  ]);
+                }}
+                onPreviewRefresh={() => setIframeKey((k) => k + 1)}
+              />
+            ) : (
+              <>
+                <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+                  <div>
+                    <h3 className="font-syne font-700 text-sm">
+                      Live Preview
+                    </h3>
+                    <p className="text-slate-500 text-xs font-mono truncate max-w-[200px]">
+                      {previewUrl || "No preview available"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowEdit(true)}
+                      className="text-accent text-xs font-mono hover:underline"
+                    >
+                      Edit
+                    </button>
+                    {previewUrl && (
+                      <a
+                        href={previewUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-slate-400 text-xs font-mono hover:text-slate-200"
+                      >
+                        Open
+                      </a>
+                    )}
+                  </div>
+                </div>
+                {previewUrl ? (
+                  <div className="flex-1 bg-white">
+                    <iframe
+                      key={iframeKey}
+                      src={previewUrl}
+                      title="Project Preview"
+                      className="w-full h-full border-0"
+                      sandbox="allow-scripts allow-same-origin allow-forms"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center">
+                    <p className="text-slate-600 font-mono text-sm">
+                      Preview will appear here
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Preview iframe during build (before completion) */}
+        {!complete && previewUrl && !activeFile && (
+          <div className="hidden lg:flex lg:w-[380px] flex-shrink-0 border-l border-slate-800 flex-col">
+            <div className="p-4 border-b border-slate-800">
+              <h3 className="font-syne font-700 text-sm">Live Preview</h3>
+              <p className="text-slate-500 text-xs font-mono truncate">
+                {previewUrl}
+              </p>
             </div>
             <div className="flex-1 bg-white">
               <iframe
+                key={iframeKey}
                 src={previewUrl}
                 title="Project Preview"
                 className="w-full h-full border-0"
