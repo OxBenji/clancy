@@ -14,6 +14,7 @@ interface PlanTask {
   order_index: number;
   status: "pending" | "active" | "done" | "error";
   duration?: number;
+  success_criteria?: string[];
 }
 
 interface LogEntry {
@@ -246,12 +247,13 @@ function Create({
       }
       const data = await res.json();
       const tasks: PlanTask[] = data.tasks.map(
-        (tk: { label: string; estimated_seconds: number; order_index: number }) => ({
+        (tk: { label: string; estimated_seconds: number; order_index: number; success_criteria?: string[] }) => ({
           id: uid(),
           label: tk.label,
           estimated_seconds: tk.estimated_seconds,
           order_index: tk.order_index,
           status: "pending" as const,
+          success_criteria: tk.success_criteria,
         })
       );
       onPlan(desc.trim(), tasks);
@@ -423,10 +425,12 @@ function Building({
 
     const payload = {
       project_id: projectId,
+      description,
       tasks: initialTasks.map((t) => ({
         id: t.id,
         label: t.label,
         order_index: t.order_index,
+        success_criteria: t.success_criteria,
       })),
     };
 

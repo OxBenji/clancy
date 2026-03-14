@@ -213,6 +213,7 @@ export default function Building({
         id: t.id,
         label: t.label,
         order_index: t.order_index,
+        success_criteria: t.success_criteria,
       })),
     };
 

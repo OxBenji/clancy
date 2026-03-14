@@ -5,6 +5,7 @@ export interface PlanTask {
   order_index: number;
   status: "pending" | "active" | "done" | "error";
   duration?: number;
+  success_criteria?: string[];
 }
 
 export interface LogEntry {

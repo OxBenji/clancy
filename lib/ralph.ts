@@ -3,16 +3,21 @@ import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import {
   writeFiles,
   runCommandStreaming,
+  readFile,
+  listFiles,
 } from "@/lib/sandbox";
 import { stripHtml } from "@/lib/sanitize";
 import type { Sandbox } from "e2b";
 
-// ── Cost constants for claude-sonnet-4-6 ──
-const INPUT_COST_PER_MILLION = 3; // $3 per 1M input tokens
-const OUTPUT_COST_PER_MILLION = 15; // $15 per 1M output tokens
+// ── Cost constants ──
+const INPUT_COST_PER_MILLION = 3; // $3 per 1M input tokens (sonnet)
+const OUTPUT_COST_PER_MILLION = 15; // $15 per 1M output tokens (sonnet)
+const HAIKU_INPUT_COST = 0.80; // $0.80 per 1M input tokens (haiku)
+const HAIKU_OUTPUT_COST = 4; // $4 per 1M output tokens (haiku)
 const BUDGET_LIMIT_USD = parseFloat(process.env.BUDGET_LIMIT_USD || "2.00");
 const MAX_ITERATIONS = parseInt(process.env.MAX_ITERATIONS || "10", 10);
 const MAX_RETRIES_PER_TASK = 3;
+const MAX_REVIEW_CYCLES = 3;
 
 // ── Types ──
 
@@ -20,6 +25,7 @@ export interface RalphTask {
   id: string;
   label: string;
   order_index: number;
+  success_criteria?: string[];
 }
 
 export interface RalphEvent {
@@ -62,6 +68,14 @@ Other rules:
 - RESPOND WITH ONLY THE JSON OBJECT — no markdown fences, no extra text before or after
 - When complete, add "status":"complete" to the JSON
 - If you cannot complete the task, add "status":"failed","reason":"explanation" to the JSON`;
+
+const REVIEWER_SYSTEM_PROMPT = `You are a code reviewer. You will be given a task label, success criteria, and the actual file contents from a sandbox. Your job is to verify whether the code satisfies ALL the success criteria.
+
+Reply with EXACTLY one of:
+- PASS
+- FAIL: [specific reason what is missing or wrong]
+
+Be strict. Check each criterion literally against the file contents. If a criterion says "index.html contains <nav>", check that the string "<nav" actually appears in index.html.`;
 
 // ── Parser: extract files via regex, decode base64 content ──
 
@@ -139,6 +153,130 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
 
   const action: AgentAction = { files, commands, summary };
   return { action, complete, failReason };
+}
+
+// ── Success criteria verification ──
+
+async function verifyCriteria(
+  sandbox: Sandbox,
+  criteria: string[],
+  emit: (event: RalphEvent) => void,
+  taskId: string
+): Promise<{ passed: boolean; failures: string[] }> {
+  const failures: string[] = [];
+
+  // Read all project files for checking
+  let projectFiles: string[] = [];
+  try {
+    projectFiles = await listFiles(sandbox, "/home/user/project");
+  } catch {
+    return { passed: false, failures: ["Could not read project files"] };
+  }
+
+  // Read contents of all readable files
+  const fileContents: Record<string, string> = {};
+  for (const fname of projectFiles) {
+    if (/\.(html|css|js|ts|tsx|jsx|json|md|txt)$/.test(fname)) {
+      try {
+        const content = await readFile(sandbox, `/home/user/project/${fname}`);
+        fileContents[fname] = content;
+      } catch {
+        // skip unreadable
+      }
+    }
+  }
+
+  // Also try reading from subdirectories (one level deep)
+  for (const fname of projectFiles) {
+    if (!fname.includes(".")) {
+      try {
+        const subFiles = await listFiles(sandbox, `/home/user/project/${fname}`);
+        for (const sf of subFiles) {
+          if (/\.(html|css|js|ts|tsx|jsx|json|md|txt)$/.test(sf)) {
+            try {
+              const content = await readFile(sandbox, `/home/user/project/${fname}/${sf}`);
+              fileContents[`${fname}/${sf}`] = content;
+            } catch {
+              // skip
+            }
+          }
+        }
+      } catch {
+        // not a directory
+      }
+    }
+  }
+
+  for (const criterion of criteria) {
+    // Parse criterion: "filename contains pattern"
+    const containsMatch = criterion.match(/^(\S+)\s+contains?\s+(.+)$/i);
+    if (containsMatch) {
+      const targetFile = containsMatch[1];
+      const pattern = containsMatch[2].trim();
+      const content = fileContents[targetFile];
+      if (!content) {
+        failures.push(`${targetFile} not found`);
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} not found` } });
+      } else if (!content.includes(pattern)) {
+        failures.push(`${targetFile} missing: ${pattern}`);
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} missing ${pattern}` } });
+      } else {
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} contains ${pattern}` } });
+      }
+    } else {
+      // Generic check — look for the criterion text in any file
+      const found = Object.entries(fileContents).some(([, content]) => content.includes(criterion));
+      if (found) {
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found "${criterion.slice(0, 50)}"` } });
+      } else {
+        failures.push(`Not found in any file: ${criterion}`);
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: "${criterion.slice(0, 50)}" not found` } });
+      }
+    }
+  }
+
+  return { passed: failures.length === 0, failures };
+}
+
+// ── Haiku reviewer agent ──
+
+async function runReview(
+  anthropic: Anthropic,
+  taskLabel: string,
+  criteria: string[],
+  fileContents: Record<string, string>,
+): Promise<{ passed: boolean; reason: string; cost: number }> {
+  const filesText = Object.entries(fileContents)
+    .map(([path, content]) => `--- ${path} ---\n${content.slice(0, 8000)}`)
+    .join("\n\n");
+
+  const criteriaText = criteria.map((c, i) => `${i + 1}. ${c}`).join("\n");
+
+  const response = await anthropic.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 256,
+    system: REVIEWER_SYSTEM_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: `Task: "${taskLabel}"\n\nSuccess criteria:\n${criteriaText}\n\nActual file contents:\n${filesText}`,
+      },
+    ],
+  });
+
+  const inputTokens = response.usage?.input_tokens ?? 0;
+  const outputTokens = response.usage?.output_tokens ?? 0;
+  const cost = (inputTokens / 1_000_000) * HAIKU_INPUT_COST + (outputTokens / 1_000_000) * HAIKU_OUTPUT_COST;
+
+  const textBlock = response.content.find((b) => b.type === "text");
+  const text = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "FAIL: No response";
+
+  if (text.startsWith("PASS")) {
+    return { passed: true, reason: "All criteria satisfied", cost };
+  }
+
+  const reason = text.startsWith("FAIL:") ? text.slice(5).trim() : text;
+  return { passed: false, reason, cost };
 }
 
 function calculateCost(inputTokens: number, outputTokens: number): number {
@@ -219,6 +357,8 @@ export async function runRalphLoop(
       .update({ status: "active" })
       .eq("id", task.id);
 
+    const hasCriteria = task.success_criteria && task.success_criteria.length > 0;
+
     // ── Retry loop (max 3 attempts) ──
     let taskComplete = false;
 
@@ -261,6 +401,11 @@ export async function runRalphLoop(
             ? `\n\nPrevious tasks completed:\n${completedActions.join("\n")}`
             : "";
 
+        // Include success criteria in the prompt so the worker knows what to target
+        const criteriaText = hasCriteria
+          ? `\n\nSUCCESS CRITERIA (your output MUST satisfy all of these):\n${task.success_criteria!.map((c, i) => `${i + 1}. ${c}`).join("\n")}`
+          : "";
+
         // ── Fresh Anthropic API call ──
         const response = await anthropic.messages.create({
           model: "claude-sonnet-4-6",
@@ -269,7 +414,7 @@ export async function runRalphLoop(
           messages: [
             {
               role: "user",
-              content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${previousContext}${guardrailsText}\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
+              content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${criteriaText}${previousContext}${guardrailsText}\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
             },
           ],
         });
@@ -296,7 +441,7 @@ export async function runRalphLoop(
         }
 
         const rawText = textBlock.text;
-        const { action, complete, failReason } = parseAgentResponse(rawText);
+        const { action, failReason } = parseAgentResponse(rawText);
 
         // Debug: log start of response when parse fails
         if (!action && !failReason) {
@@ -311,7 +456,6 @@ export async function runRalphLoop(
         }
 
         if (failReason) {
-          // Write guardrail sign
           await db.from("guardrails").insert({
             project_id: projectId,
             task_label: task.label,
@@ -325,7 +469,7 @@ export async function runRalphLoop(
               log: `Attempt ${attempt} failed: ${stripHtml(failReason)}`,
             },
           });
-          continue; // retry
+          continue;
         }
 
         if (!action) {
@@ -408,18 +552,95 @@ export async function runRalphLoop(
           );
         }
 
-        if (complete) {
-          taskComplete = true;
-          break; // success — move to next task
+        // ── VERIFICATION: check success criteria against actual files ──
+        if (hasCriteria) {
+          emit({
+            event: "agent_log",
+            data: { task_id: task.id, log: "Verifying success criteria..." },
+          });
+
+          const { passed, failures } = await verifyCriteria(
+            sandbox,
+            task.success_criteria!,
+            emit,
+            task.id
+          );
+
+          if (!passed) {
+            // ── REVIEWER: Haiku cross-checks ──
+            emit({
+              event: "agent_log",
+              data: { task_id: task.id, log: "Running reviewer agent..." },
+            });
+
+            // Read current files for review
+            let projectFiles: string[] = [];
+            try { projectFiles = await listFiles(sandbox, "/home/user/project"); } catch { /* */ }
+
+            const reviewContents: Record<string, string> = {};
+            for (const fname of projectFiles) {
+              if (/\.(html|css|js|ts|json)$/.test(fname)) {
+                try {
+                  reviewContents[fname] = await readFile(sandbox, `/home/user/project/${fname}`);
+                } catch { /* skip */ }
+              }
+            }
+
+            try {
+              const review = await runReview(anthropic, task.label, task.success_criteria!, reviewContents);
+              totalCostUsd += review.cost;
+
+              if (review.passed) {
+                emit({
+                  event: "agent_log",
+                  data: { task_id: task.id, log: "Reviewer: PASS — criteria satisfied" },
+                });
+                taskComplete = true;
+                break;
+              } else {
+                emit({
+                  event: "agent_log",
+                  data: { task_id: task.id, log: `Reviewer: FAIL — ${stripHtml(review.reason)}` },
+                });
+
+                // Add failure as guardrail for retry
+                const failDetail = failures.join("; ");
+                await db.from("guardrails").insert({
+                  project_id: projectId,
+                  task_label: task.label,
+                  sign: `Verification failed: ${failDetail}. Reviewer: ${review.reason}`,
+                });
+                continue; // retry with guardrail
+              }
+            } catch (reviewErr) {
+              // If review fails, fall back to criteria check result
+              const msg = reviewErr instanceof Error ? reviewErr.message : "Review failed";
+              emit({
+                event: "agent_log",
+                data: { task_id: task.id, log: `Reviewer error: ${stripHtml(msg)} — using criteria check` },
+              });
+
+              const failDetail = failures.join("; ");
+              await db.from("guardrails").insert({
+                project_id: projectId,
+                task_label: task.label,
+                sign: `Verification failed: ${failDetail}`,
+              });
+              continue;
+            }
+          }
+
+          emit({
+            event: "agent_log",
+            data: { task_id: task.id, log: "All criteria verified" },
+          });
         }
 
-        // If action executed but no explicit COMPLETE, treat as success
         taskComplete = true;
         break;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Unknown error";
 
-        // Write guardrail
         await db.from("guardrails").insert({
           project_id: projectId,
           task_label: task.label,
