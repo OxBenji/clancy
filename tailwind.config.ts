@@ -26,10 +26,15 @@ const config: Config = {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.3" },
         },
+        ticker: {
+          "0%": { transform: "translateX(0)" },
+          "100%": { transform: "translateX(-50%)" },
+        },
       },
       animation: {
         "fade-in-up": "fade-in-up 0.4s ease-out forwards",
         pulse_dot: "pulse_dot 1.2s ease-in-out infinite",
+        ticker: "ticker 30s linear infinite",
       },
     },
   },
