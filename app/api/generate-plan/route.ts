@@ -3,14 +3,24 @@ import Anthropic from "@anthropic-ai/sdk";
 import { rateLimit, getRequestIP } from "@/lib/rate-limit";
 import { validateDescription } from "@/lib/sanitize";
 
+export const maxDuration = 30;
+
 const SYSTEM_PROMPT = `You are a project planner. Break the user's description into 5-8 tasks. Each task must be:
 1. Small enough to complete in one context window
 2. Have binary verifiable success criteria — things that can be checked by reading the files
-3. Ordered by dependency — each task builds on the previous
+3. Ordered by dependency — tasks that depend on earlier work get a higher order_index
+
+IMPORTANT: Tasks that are independent of each other SHOULD share the same order_index so they can run in parallel. For example, creating HTML structure and creating CSS base styles can both be order_index 1 since they don't depend on each other. Only increase order_index when a task truly depends on a previous one.
 
 For each task return:
 - label: one clear action sentence
-- success_criteria: array of 3-5 file-checkable conditions (e.g. "index.html contains <nav>", "styles.css contains .hero class")
+- success_criteria: array of 3-5 conditions. CRITICAL FORMAT: every criterion MUST use the pattern "filename contains literal_text_to_find". Examples:
+  - "index.html contains <nav"
+  - "index.html contains class=\\"profile\\""
+  - "styles.css contains .hero"
+  - "styles.css contains border-radius"
+  - "index.html contains <!DOCTYPE html>"
+  Do NOT use natural language like "has a", "exists with", "includes a section for". Only use "contains" with a literal code snippet that will appear in the file.
 - estimated_seconds: 20-60
 - order_index: number starting at 1
 
@@ -82,6 +92,13 @@ export async function POST(request: Request) {
   const descResult = validateDescription(body.description);
   if (!descResult.valid) {
     return NextResponse.json({ error: descResult.error }, { status: 400 });
+  }
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return NextResponse.json(
+      { error: "Server configuration error: ANTHROPIC_API_KEY is not set" },
+      { status: 500 }
+    );
   }
 
   try {

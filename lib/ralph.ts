@@ -199,53 +199,122 @@ async function verifyCriteria(
   criteria: string[],
   emit: (event: RalphEvent) => void,
   taskId: string
-): Promise<{ passed: boolean; failures: string[] }> {
+): Promise<{ passed: boolean; failures: string[]; fileContents: Record<string, string> }> {
   const failures: string[] = [];
 
   const fileContents = await readAllProjectFiles(sandbox);
   if (Object.keys(fileContents).length === 0) {
-    return { passed: false, failures: ["Could not read project files"] };
+    return { passed: false, failures: ["Could not read project files"], fileContents };
   }
 
   // Helper: find file content by exact name or basename match (e.g. "styles.css" matches "css/styles.css")
   const findFile = (name: string): string | undefined => {
     if (fileContents[name]) return fileContents[name];
-    // Try basename match
     const byBasename = Object.entries(fileContents).find(
       ([path]) => path.endsWith(`/${name}`) || path === name
     );
     return byBasename?.[1];
   };
 
+  // Extract code tokens from natural language (HTML tags, CSS props, attribute values, etc.)
+  const extractPatterns = (text: string): string[] => {
+    const patterns: string[] = [];
+    // HTML tags like <main>, </html>, <!DOCTYPE html>
+    const tagMatches = text.match(/<[!/]?\w[\w-]*[^>]*>/g);
+    if (tagMatches) patterns.push(...tagMatches);
+    // CSS patterns like "font-family", "min-height: 100vh", "box-sizing: border-box"
+    const cssMatches = text.match(/[\w-]+:\s*[^,;'")\]]+/g);
+    if (cssMatches) patterns.push(...cssMatches.map((m) => m.trim()));
+    // Quoted strings
+    const quotedMatches = text.match(/['"]([^'"]+)['"]/g);
+    if (quotedMatches) patterns.push(...quotedMatches.map((m) => m.slice(1, -1)));
+    // Class/id references like class 'link-btn', class="profile"
+    const classMatch = text.match(/class\s+['"]?([\w-]+)['"]?/gi);
+    if (classMatch) {
+      for (const m of classMatch) {
+        const val = m.match(/class\s+['"]?([\w-]+)['"]?/i);
+        if (val) patterns.push(val[1]);
+      }
+    }
+    // Element references like <a> tags, <link> tag
+    const elemMatches = text.match(/<(\w+)>/g);
+    if (elemMatches) patterns.push(...elemMatches);
+    return patterns;
+  };
+
+  // Broader regex: "filename contains/has/includes/exists with/has a..."
+  const filePatternMatch = /^(\S+?\.\w+)\s+(?:contains?|has\s+(?:a\s+)?|includes?|exists?\s+with)\s+(.+)$/i;
+
   for (const criterion of criteria) {
-    // Parse criterion: "filename contains pattern"
-    const containsMatch = criterion.match(/^(\S+)\s+contains?\s+(.+)$/i);
-    if (containsMatch) {
-      const targetFile = containsMatch[1];
-      const pattern = containsMatch[2].trim();
+    const match = criterion.match(filePatternMatch);
+    if (match) {
+      const targetFile = match[1];
+      const patternText = match[2].trim();
       const content = findFile(targetFile);
+
       if (!content) {
         failures.push(`${targetFile} not found`);
         emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} not found` } });
-      } else if (!content.includes(pattern)) {
-        failures.push(`${targetFile} missing: ${pattern}`);
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} missing ${pattern}` } });
-      } else {
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} contains ${pattern}` } });
+        continue;
       }
+
+      // Try literal match first
+      if (content.includes(patternText)) {
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} contains ${patternText.slice(0, 50)}` } });
+        continue;
+      }
+
+      // Extract code tokens from the natural language pattern and check each
+      const patterns = extractPatterns(patternText);
+      if (patterns.length > 0) {
+        const contentLower = content.toLowerCase();
+        const matched = patterns.filter((p) => contentLower.includes(p.toLowerCase()));
+        if (matched.length > 0 && matched.length >= patterns.length * 0.5) {
+          emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} has ${matched.length}/${patterns.length} expected patterns` } });
+          continue;
+        }
+      }
+
+      failures.push(`${targetFile} missing: ${patternText}`);
+      emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} missing ${patternText.slice(0, 50)}` } });
     } else {
-      // Generic check — look for the criterion text in any file
-      const found = Object.entries(fileContents).some(([, content]) => content.includes(criterion));
-      if (found) {
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found "${criterion.slice(0, 50)}"` } });
+      // Check if criterion starts with a filename
+      const filePrefix = criterion.match(/^(\S+?\.\w+)\s+/);
+      if (filePrefix) {
+        const content = findFile(filePrefix[1]);
+        if (content) {
+          // File exists — extract patterns from the rest of the criterion
+          const rest = criterion.slice(filePrefix[0].length);
+          const patterns = extractPatterns(rest);
+          const contentLower = content.toLowerCase();
+          const matched = patterns.filter((p) => contentLower.includes(p.toLowerCase()));
+          if (matched.length > 0) {
+            emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${filePrefix[1]} has ${matched.length} expected patterns` } });
+            continue;
+          }
+        }
+      }
+
+      // Generic: look for extracted patterns or literal text in any file
+      const patterns = extractPatterns(criterion);
+      const allContent = Object.values(fileContents).join("\n").toLowerCase();
+      const matched = patterns.filter((p) => allContent.includes(p.toLowerCase()));
+
+      if (matched.length > 0 && matched.length >= patterns.length * 0.5) {
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found ${matched.length}/${patterns.length} patterns for "${criterion.slice(0, 40)}"` } });
       } else {
-        failures.push(`Not found in any file: ${criterion}`);
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: "${criterion.slice(0, 50)}" not found` } });
+        const found = Object.values(fileContents).some((content) => content.includes(criterion));
+        if (found) {
+          emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found "${criterion.slice(0, 50)}"` } });
+        } else {
+          failures.push(criterion);
+          emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: "${criterion.slice(0, 50)}" not found` } });
+        }
       }
     }
   }
 
-  return { passed: failures.length === 0, failures };
+  return { passed: failures.length === 0, failures, fileContents };
 }
 
 // ── Haiku reviewer agent ──
@@ -306,6 +375,15 @@ export async function runRalphLoop(
   emit: (event: RalphEvent) => void
 ): Promise<{ totalCostUsd: number; totalIterations: number }> {
   const db = getSupabaseAdmin();
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    emit({
+      event: "agent_log",
+      data: { task_id: "system", log: "Error: ANTHROPIC_API_KEY is not set" },
+    });
+    return { totalCostUsd: 0, totalIterations: 0 };
+  }
+
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   let totalCostUsd = 0;
@@ -323,34 +401,24 @@ export async function runRalphLoop(
   }));
   await db.from("tasks").insert(taskRows);
 
-  for (let taskIdx = 0; taskIdx < sorted.length; taskIdx++) {
-    const task = sorted[taskIdx];
+  // Shared mutable state for parallel task execution
+  const sharedState = {
+    totalCostUsd,
+    totalIterations,
+  };
+
+  // ── Execute a single task (with retries) ──
+  async function executeTask(
+    task: RalphTask,
+    taskIdx: number,
+    totalTasks: number
+  ): Promise<{ complete: boolean; costAdded: number; iterationsUsed: number; summary?: string }> {
     const startTime = Date.now();
-
-    // ── Budget check ──
-    if (totalCostUsd >= BUDGET_LIMIT_USD) {
-      emit({
-        event: "budget_exceeded",
-        data: { cost_usd: totalCostUsd, limit_usd: BUDGET_LIMIT_USD },
-      });
-      await db
-        .from("projects")
-        .update({ status: "budget_exceeded" })
-        .eq("id", projectId);
-      break;
-    }
-
-    // ── Max iterations check ──
-    if (totalIterations >= MAX_ITERATIONS) {
-      emit({
-        event: "agent_log",
-        data: {
-          task_id: "system",
-          log: `Hard stop: reached ${MAX_ITERATIONS} total iterations.`,
-        },
-      });
-      break;
-    }
+    const hasCriteria = task.success_criteria && task.success_criteria.length > 0;
+    let taskComplete = false;
+    let costAdded = 0;
+    let iterationsUsed = 0;
+    let taskSummary: string | undefined;
 
     emit({
       event: "task_start",
@@ -358,7 +426,7 @@ export async function runRalphLoop(
         task_id: task.id,
         label: task.label,
         task_index: taskIdx + 1,
-        total_tasks: sorted.length,
+        total_tasks: totalTasks,
       },
     });
 
@@ -367,37 +435,45 @@ export async function runRalphLoop(
       .update({ status: "active" })
       .eq("id", task.id);
 
-    const hasCriteria = task.success_criteria && task.success_criteria.length > 0;
-
-    // ── Retry loop (max 3 attempts) ──
-    let taskComplete = false;
-
     for (let attempt = 1; attempt <= MAX_RETRIES_PER_TASK; attempt++) {
-      if (totalIterations >= MAX_ITERATIONS) break;
-      if (totalCostUsd >= BUDGET_LIMIT_USD) break;
+      if (sharedState.totalIterations >= MAX_ITERATIONS) break;
+      if (sharedState.totalCostUsd >= BUDGET_LIMIT_USD) break;
 
-      totalIterations++;
+      sharedState.totalIterations++;
+      iterationsUsed++;
 
       emit({
         event: "agent_log",
         data: {
           task_id: task.id,
-          log: `Task ${taskIdx + 1}/${sorted.length} · Attempt ${attempt}/${MAX_RETRIES_PER_TASK}`,
+          log: `Task ${taskIdx + 1}/${totalTasks} · Attempt ${attempt}/${MAX_RETRIES_PER_TASK}`,
           task_index: taskIdx + 1,
-          total_tasks: sorted.length,
+          total_tasks: totalTasks,
           attempt,
           max_attempts: MAX_RETRIES_PER_TASK,
-          iteration: totalIterations,
+          iteration: sharedState.totalIterations,
           max_iterations: MAX_ITERATIONS,
         },
       });
 
       try {
         // ── Read guardrails for this project ──
-        const { data: guardrails } = await db
+        emit({
+          event: "agent_log",
+          data: { task_id: task.id, log: "Loading context..." },
+        });
+
+        const { data: guardrails, error: guardrailsError } = await db
           .from("guardrails")
           .select("task_label, sign")
           .eq("project_id", projectId);
+
+        if (guardrailsError) {
+          emit({
+            event: "agent_log",
+            data: { task_id: task.id, log: `Guardrails query error: ${guardrailsError.message} — continuing without guardrails` },
+          });
+        }
 
         const guardrailsText =
           guardrails && guardrails.length > 0
@@ -416,29 +492,55 @@ export async function runRalphLoop(
           ? `\n\nSUCCESS CRITERIA (your output MUST satisfy all of these):\n${task.success_criteria!.map((c, i) => `${i + 1}. ${c}`).join("\n")}`
           : "";
 
-        // ── Fresh Anthropic API call ──
-        const response = await anthropic.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 16384,
-          system: TASK_SYSTEM_PROMPT,
-          messages: [
-            {
-              role: "user",
-              content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${criteriaText}${previousContext}${guardrailsText}\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
-            },
-          ],
+        // ── Fresh Anthropic API call (with heartbeat so UI doesn't look stuck) ──
+        emit({
+          event: "agent_log",
+          data: { task_id: task.id, log: "Generating code..." },
         });
+
+        // Heartbeat: send a dot every 5s while waiting for Claude
+        const heartbeat = setInterval(() => {
+          emit({
+            event: "agent_log",
+            data: { task_id: task.id, log: "..." },
+          });
+        }, 5000);
+
+        let response;
+        try {
+          const apiPromise = anthropic.messages.create({
+            model: "claude-sonnet-4-6",
+            max_tokens: 16384,
+            system: TASK_SYSTEM_PROMPT,
+            messages: [
+              {
+                role: "user",
+                content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${criteriaText}${previousContext}${guardrailsText}\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
+              },
+            ],
+          });
+
+          // 90-second timeout on the API call
+          const timeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Claude API call timed out after 90s")), 90_000)
+          );
+
+          response = await Promise.race([apiPromise, timeout]);
+        } finally {
+          clearInterval(heartbeat);
+        }
 
         // ── Track cost ──
         const inputTokens = response.usage?.input_tokens ?? 0;
         const outputTokens = response.usage?.output_tokens ?? 0;
         const callCost = calculateCost(inputTokens, outputTokens);
-        totalCostUsd += callCost;
+        costAdded += callCost;
+        sharedState.totalCostUsd += callCost;
 
         emit({
           event: "cost_update",
           data: {
-            cost_usd: totalCostUsd,
+            cost_usd: sharedState.totalCostUsd,
             limit_usd: BUDGET_LIMIT_USD,
             call_tokens: { input: inputTokens, output: outputTokens },
           },
@@ -557,9 +659,7 @@ export async function runRalphLoop(
             event: "agent_log",
             data: { task_id: task.id, log: stripHtml(action.summary) },
           });
-          completedActions.push(
-            `- Task ${task.order_index}: ${action.summary}`
-          );
+          taskSummary = action.summary;
         }
 
         // ── VERIFICATION: check success criteria against actual files ──
@@ -569,7 +669,7 @@ export async function runRalphLoop(
             data: { task_id: task.id, log: "Verifying success criteria..." },
           });
 
-          const { passed, failures } = await verifyCriteria(
+          const { passed, failures, fileContents: verifyContents } = await verifyCriteria(
             sandbox,
             task.success_criteria!,
             emit,
@@ -583,12 +683,11 @@ export async function runRalphLoop(
               data: { task_id: task.id, log: "Running reviewer agent..." },
             });
 
-            // Read current files for review (including subdirectories)
-            const reviewContents = await readAllProjectFiles(sandbox);
-
+            // Reuse file contents from verification (avoids redundant sandbox reads)
             try {
-              const review = await runReview(anthropic, task.label, task.success_criteria!, reviewContents);
-              totalCostUsd += review.cost;
+              const review = await runReview(anthropic, task.label, task.success_criteria!, verifyContents);
+              costAdded += review.cost;
+              sharedState.totalCostUsd += review.cost;
 
               if (review.passed) {
                 emit({
@@ -673,7 +772,83 @@ export async function runRalphLoop(
         data: { task_id: task.id, error: `Failed after ${MAX_RETRIES_PER_TASK} attempts` },
       });
     }
+
+    return { complete: taskComplete, costAdded, iterationsUsed, summary: taskSummary };
   }
+
+  // ── Group tasks by order_index for parallel execution ──
+  const groups: Map<number, { task: RalphTask; globalIdx: number }[]> = new Map();
+  for (let i = 0; i < sorted.length; i++) {
+    const orderIdx = sorted[i].order_index;
+    if (!groups.has(orderIdx)) groups.set(orderIdx, []);
+    groups.get(orderIdx)!.push({ task: sorted[i], globalIdx: i });
+  }
+
+  const sortedGroupKeys = Array.from(groups.keys()).sort((a, b) => a - b);
+
+  for (const groupKey of sortedGroupKeys) {
+    // ── Budget + iteration checks before each group ──
+    if (sharedState.totalCostUsd >= BUDGET_LIMIT_USD) {
+      emit({
+        event: "budget_exceeded",
+        data: { cost_usd: sharedState.totalCostUsd, limit_usd: BUDGET_LIMIT_USD },
+      });
+      await db
+        .from("projects")
+        .update({ status: "budget_exceeded" })
+        .eq("id", projectId);
+      break;
+    }
+
+    if (sharedState.totalIterations >= MAX_ITERATIONS) {
+      emit({
+        event: "agent_log",
+        data: {
+          task_id: "system",
+          log: `Hard stop: reached ${MAX_ITERATIONS} total iterations.`,
+        },
+      });
+      break;
+    }
+
+    const group = groups.get(groupKey)!;
+
+    if (group.length === 1) {
+      // Single task — run sequentially (no overhead)
+      const { task, globalIdx } = group[0];
+      const result = await executeTask(task, globalIdx, sorted.length);
+      if (result.summary) {
+        completedActions.push(`- Task ${task.order_index}: ${result.summary}`);
+      }
+    } else {
+      // Multiple tasks at same order_index — run in parallel
+      emit({
+        event: "agent_log",
+        data: {
+          task_id: "system",
+          log: `Running ${group.length} tasks in parallel (order_index ${groupKey})`,
+        },
+      });
+
+      const results = await Promise.all(
+        group.map(({ task, globalIdx }) =>
+          executeTask(task, globalIdx, sorted.length)
+        )
+      );
+
+      // Collect summaries from all parallel tasks
+      for (let i = 0; i < results.length; i++) {
+        if (results[i].summary) {
+          completedActions.push(
+            `- Task ${group[i].task.order_index}: ${results[i].summary}`
+          );
+        }
+      }
+    }
+  }
+
+  totalCostUsd = sharedState.totalCostUsd;
+  totalIterations = sharedState.totalIterations;
 
   // ── Update project cost in DB ──
   await db

@@ -9,6 +9,10 @@ import { rateLimit, getRequestIP } from "@/lib/rate-limit";
 import { validateDescription, clampString } from "@/lib/sanitize";
 import type { RalphTask } from "@/lib/ralph";
 
+// Force dynamic rendering + allow up to 10 minutes for the full build loop
+export const dynamic = "force-dynamic";
+export const maxDuration = 600;
+
 interface TaskInput {
   id: string;
   label: string;
@@ -240,8 +244,9 @@ export async function POST(request: Request) {
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
+      "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 }
