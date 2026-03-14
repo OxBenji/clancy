@@ -13,24 +13,21 @@ export const maxDuration = 120;
 
 const EDIT_SYSTEM_PROMPT = `You are an AI assistant helping edit an existing web project in a sandbox. The user will request changes. You can read existing files and modify them.
 
-RESPONSE FORMAT:
-Return your response as a JSON object where each file's content field is BASE64 ENCODED.
+RESPONSE FORMAT — return ONLY a JSON object, no markdown fences:
+{
+  "files": [{"path": "/home/user/project/filename", "content": "raw file content here"}],
+  "commands": [],
+  "summary": "One-line description of what you changed",
+  "status": "complete"
+}
 
-{"files":[{"path":"/home/user/project/filename","content":"BASE64_ENCODED_CONTENT"}],"commands":[],"summary":"One-line description of what you changed","status":"complete"}
-
-CRITICAL RULES FOR BASE64:
-- The "content" field of each file MUST be the base64-encoded version of the file content
-- The "path" field is plain text (NOT base64)
-- The "summary" field is plain text (NOT base64)
-- The "commands" array contains plain text commands (NOT base64)
-- ONLY the file content values are base64 encoded
-
-Other rules:
+RULES:
+- "content" is the RAW file content as a JSON string (escape newlines as \\n, quotes as \\")
+- Do NOT base64 encode anything — use plain text
 - All file paths must be absolute under /home/user/project/
-- When modifying a file, output the COMPLETE updated content (base64 encoded), not just the diff
+- When modifying a file, output the COMPLETE updated content, not just the diff
 - Only include files that need changes
-- Keep the project working after your changes
-- RESPOND WITH ONLY THE JSON OBJECT — no markdown fences, no extra text`;
+- Keep the project working after your changes`;
 
 interface EditAction {
   files: { path: string; content: string }[];
@@ -42,79 +39,34 @@ function parseResponse(text: string): EditAction | null {
   let cleaned = text.trim();
   cleaned = cleaned.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
 
-  const files: { path: string; content: string }[] = [];
-
-  // Strategy 1: Try JSON.parse first (handles both base64 and plain text)
+  // Try JSON.parse directly
   try {
     const parsed = JSON.parse(cleaned);
+    const files: { path: string; content: string }[] = [];
     if (parsed.files && Array.isArray(parsed.files)) {
       for (const f of parsed.files) {
-        if (!f.path || !f.content) continue;
-        const isBase64 = /^[A-Za-z0-9+/=\s]+$/.test(f.content) && f.content.length > 20;
-        if (isBase64) {
-          try {
-            const decoded = Buffer.from(f.content.replace(/\s/g, ""), "base64").toString("utf-8");
-            const printableRatio = decoded.replace(/[^\x20-\x7E\n\r\t]/g, "").length / decoded.length;
-            if (decoded.length > 0 && printableRatio > 0.9) {
-              files.push({ path: f.path, content: decoded });
-              continue;
-            }
-          } catch { /* fall through to plain text */ }
-        }
-        if (typeof f.content === "string" && f.content.length > 0) {
+        if (f.path && typeof f.content === "string" && f.content.length > 0) {
           files.push({ path: f.path, content: f.content });
         }
       }
     }
-  } catch {
-    // JSON.parse failed — fall back to regex
-  }
 
-  // Strategy 2: Regex fallback for base64 content
-  if (files.length === 0) {
-    const fileRegex = /\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([A-Za-z0-9+/=\s]+?)"\s*\}/g;
-    let match;
-    while ((match = fileRegex.exec(cleaned)) !== null) {
-      const path = match[1];
-      const b64Content = match[2].replace(/\s/g, "");
-      try {
-        const decoded = Buffer.from(b64Content, "base64").toString("utf-8");
-        if (decoded.length > 0) {
-          files.push({ path, content: decoded });
-        }
-      } catch {
-        // skip files that fail to decode
+    const commands: string[] = [];
+    if (parsed.commands && Array.isArray(parsed.commands)) {
+      for (const cmd of parsed.commands) {
+        if (typeof cmd === "string") commands.push(cmd);
       }
     }
-  }
 
-  const commands: string[] = [];
-  const cmdRegex = /"commands"\s*:\s*\[([\s\S]*?)\]/;
-  const cmdMatch = cleaned.match(cmdRegex);
-  if (cmdMatch) {
-    const cmdArray = cmdMatch[1];
-    const cmdItemRegex = /"((?:[^"\\]|\\.)*)"/g;
-    let cm;
-    while ((cm = cmdItemRegex.exec(cmdArray)) !== null) {
-      commands.push(cm[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
-    }
-  }
+    const summary = typeof parsed.summary === "string" ? parsed.summary : (files.length > 0 ? `Updated ${files.length} file(s)` : "");
 
-  let summary = "";
-  const summaryMatch = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-  if (summaryMatch) {
-    summary = summaryMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-  }
+    if (files.length === 0 && commands.length === 0) return null;
 
-  if (files.length === 0 && commands.length === 0) {
+    return { files, commands, summary };
+  } catch {
+    // JSON.parse failed
     return null;
   }
-
-  if (!summary && files.length > 0) {
-    summary = `Updated ${files.length} file(s)`;
-  }
-
-  return { files, commands, summary };
 }
 
 export async function POST(request: Request) {

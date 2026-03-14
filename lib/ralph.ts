@@ -38,35 +38,33 @@ interface AgentAction {
   summary?: string;
 }
 
-// ── System prompt — base64-encoded file contents ──
+// ── System prompt — plain text file contents (NO base64) ──
 
-const TASK_SYSTEM_PROMPT = `You are an autonomous software agent executing ONE specific task inside a Linux sandbox. You have FRESH context — you do NOT remember previous interactions.
+const TASK_SYSTEM_PROMPT = `You are an autonomous software agent executing ONE specific task inside a Linux sandbox.
 
 Read the guardrails carefully — these are lessons from previous attempts that you MUST follow.
 
-RESPONSE FORMAT:
-Return your response as a JSON object where each file's content field is BASE64 ENCODED.
+RESPONSE FORMAT — return ONLY a JSON object, no markdown fences, no explanation:
+{
+  "files": [
+    {"path": "/home/user/project/index.html", "content": "<!DOCTYPE html>\\n<html>...</html>"},
+    {"path": "/home/user/project/css/styles.css", "content": "body { margin: 0; }"}
+  ],
+  "commands": ["cd /home/user/project && npm install"],
+  "summary": "What you did",
+  "status": "complete"
+}
 
-{"files":[{"path":"/home/user/project/index.html","content":"BASE64_ENCODED_CONTENT"},{"path":"/home/user/project/css/styles.css","content":"BASE64_ENCODED_CONTENT"}],"commands":["cd /home/user/project && npm install"],"summary":"What you did"}
-
-CRITICAL RULES FOR BASE64:
-- The "content" field of each file MUST be the base64-encoded version of the file content
-- The "path" field is plain text (NOT base64)
-- The "summary" field is plain text (NOT base64)
-- The "commands" array contains plain text commands (NOT base64)
-- ONLY the file content values are base64 encoded
-- To base64 encode: take the raw file content string and encode it to base64
-
-Other rules:
+RULES:
+- "content" is the RAW file content as a JSON string (escape newlines as \\n, quotes as \\")
+- Do NOT base64 encode anything — use plain text
 - All file paths must be absolute, under /home/user/project/
 - Write complete, working code — not pseudocode or placeholders
 - For web projects, use vanilla HTML/CSS/JS by default
 - Include index.html as the entry point
 - Keep files small and focused
 - Commands run in a Linux environment with Node.js, npm, and Python available
-- RESPOND WITH ONLY THE JSON OBJECT — no markdown fences, no extra text before or after
-- When complete, add "status":"complete" to the JSON
-- If you cannot complete the task, add "status":"failed","reason":"explanation" to the JSON`;
+- If you cannot complete the task, use "status": "failed" with a "reason" field`;
 
 const REVIEWER_SYSTEM_PROMPT = `You are a code reviewer. You will be given a task label, success criteria, and the actual file contents from a sandbox. Your job is to verify whether the code satisfies ALL the success criteria.
 
@@ -76,72 +74,73 @@ Reply with EXACTLY one of:
 
 Be strict. Check each criterion literally against the file contents. If a criterion says "index.html contains <nav>", check that the string "<nav" actually appears in index.html.`;
 
-// ── Parser: extract files via regex, decode base64 content ──
+// ── Parser: JSON.parse with fallback ──
 
 function parseAgentResponse(text: string): { action: AgentAction | null; complete: boolean; failReason: string | null } {
   let complete = false;
   let failReason: string | null = null;
 
-  // Strip markdown code fences
+  // Strip markdown code fences if present
   let cleaned = text.trim();
   cleaned = cleaned.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
 
-  // Also support legacy <promise> tags
-  const promiseMatch = cleaned.match(/<promise>([\s\S]*?)<\/promise>/);
-  if (promiseMatch) {
-    const promiseContent = promiseMatch[1].trim();
-    if (promiseContent === "COMPLETE") complete = true;
-    else if (promiseContent.startsWith("FAILED:")) failReason = promiseContent.slice(7).trim();
-    cleaned = cleaned.replace(/<promise>[\s\S]*?<\/promise>/g, "").trim();
-  }
-
-  // Extract files using regex — more forgiving than JSON.parse on the whole object
-  const files: { path: string; content: string }[] = [];
-
-  // Strategy 1: Try JSON.parse on the whole response first (handles both base64 and plain text)
+  // Try JSON.parse directly — this is the expected path now
   try {
     const parsed = JSON.parse(cleaned);
+
+    // Extract files
+    const files: { path: string; content: string }[] = [];
     if (parsed.files && Array.isArray(parsed.files)) {
       for (const f of parsed.files) {
-        if (!f.path || !f.content) continue;
-        // Detect if content is base64 or plain text
-        const isBase64 = /^[A-Za-z0-9+/=\s]+$/.test(f.content) && f.content.length > 20;
-        if (isBase64) {
-          try {
-            const decoded = Buffer.from(f.content.replace(/\s/g, ""), "base64").toString("utf-8");
-            // Heuristic: valid base64 decodes to mostly printable chars
-            const printableRatio = decoded.replace(/[^\x20-\x7E\n\r\t]/g, "").length / decoded.length;
-            if (decoded.length > 0 && printableRatio > 0.9) {
-              files.push({ path: f.path, content: decoded });
-              continue;
-            }
-          } catch { /* fall through to plain text */ }
-        }
-        // Plain text content (model didn't base64 encode)
-        if (typeof f.content === "string" && f.content.length > 0) {
-          files.push({ path: f.path, content: f.content });
-        }
+        if (!f.path || typeof f.content !== "string") continue;
+        files.push({ path: f.path, content: f.content });
       }
     }
+
+    // Extract commands
+    const commands: string[] = [];
+    if (parsed.commands && Array.isArray(parsed.commands)) {
+      for (const cmd of parsed.commands) {
+        if (typeof cmd === "string") commands.push(cmd);
+      }
+    }
+
+    // Extract summary
+    const summary = typeof parsed.summary === "string" ? parsed.summary : "";
+
+    // Check status
+    if (parsed.status === "complete") complete = true;
+    if (parsed.status === "failed") {
+      failReason = typeof parsed.reason === "string" ? parsed.reason : "Unknown failure";
+    }
+
+    if (files.length === 0 && commands.length === 0 && !failReason) {
+      return { action: null, complete: false, failReason: null };
+    }
+
+    if (files.length > 0 && !failReason) complete = true;
+
+    return { action: { files, commands, summary }, complete, failReason };
   } catch {
-    // JSON.parse failed — fall back to regex extraction
+    // JSON.parse failed — try to extract what we can with regex
   }
 
-  // Strategy 2: Regex fallback for base64 content (original approach)
-  if (files.length === 0) {
-    const fileRegex = /\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([A-Za-z0-9+/=\s]+?)"\s*\}/g;
-    let match;
-    while ((match = fileRegex.exec(cleaned)) !== null) {
-      const path = match[1];
-      const b64Content = match[2].replace(/\s/g, "");
-      try {
-        const decoded = Buffer.from(b64Content, "base64").toString("utf-8");
-        if (decoded.length > 0) {
-          files.push({ path, content: decoded });
-        }
-      } catch {
-        // skip files that fail to decode
-      }
+  // Regex fallback: try to find file objects in malformed JSON
+  const files: { path: string; content: string }[] = [];
+
+  // Match path + content pairs (handles both plain text and base64)
+  const fileRegex = /"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  let match;
+  while ((match = fileRegex.exec(cleaned)) !== null) {
+    const path = match[1];
+    // Unescape JSON string escapes
+    const content = match[2]
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+    if (content.length > 0) {
+      files.push({ path, content });
     }
   }
 
@@ -150,10 +149,9 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
   const cmdRegex = /"commands"\s*:\s*\[([\s\S]*?)\]/;
   const cmdMatch = cleaned.match(cmdRegex);
   if (cmdMatch) {
-    const cmdArray = cmdMatch[1];
     const cmdItemRegex = /"((?:[^"\\]|\\.)*)"/g;
     let cm;
-    while ((cm = cmdItemRegex.exec(cmdArray)) !== null) {
+    while ((cm = cmdItemRegex.exec(cmdMatch[1])) !== null) {
       commands.push(cm[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"));
     }
   }
@@ -165,7 +163,7 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
     summary = summaryMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
   }
 
-  // Check status field
+  // Check status
   const statusMatch = cleaned.match(/"status"\s*:\s*"(\w+)"/);
   if (statusMatch) {
     if (statusMatch[1] === "complete") complete = true;
@@ -179,12 +177,9 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
     return { action: null, complete: false, failReason: null };
   }
 
-  if (files.length > 0 && !failReason) {
-    complete = true;
-  }
+  if (files.length > 0 && !failReason) complete = true;
 
-  const action: AgentAction = { files, commands, summary };
-  return { action, complete, failReason };
+  return { action: { files, commands, summary }, complete, failReason };
 }
 
 // ── Shared helper: recursively read all project files (up to 2 levels deep) ──
@@ -225,25 +220,21 @@ export async function readAllProjectFiles(
   return fileContents;
 }
 
-// ── Success criteria verification ──
+// ── Success criteria verification (lightweight — no LLM call) ──
 
-async function verifyCriteria(
-  sandbox: Sandbox,
+function verifyCriteriaLocally(
+  fileContents: Record<string, string>,
   criteria: string[],
   emit: (event: RalphEvent) => void,
-  taskId: string,
-  fallbackFiles: Record<string, string> = {}
-): Promise<{ passed: boolean; failures: string[]; fileContents: Record<string, string> }> {
+  taskId: string
+): { passed: boolean; failures: string[] } {
   const failures: string[] = [];
 
-  const sandboxFiles = await readAllProjectFiles(sandbox);
-  // Merge: sandbox files take precedence, but fallback fills gaps (e.g. during parallel execution race conditions)
-  const fileContents = { ...fallbackFiles, ...sandboxFiles };
   if (Object.keys(fileContents).length === 0) {
-    return { passed: false, failures: ["Could not read project files"], fileContents };
+    return { passed: false, failures: ["Could not read project files"] };
   }
 
-  // Helper: find file content by exact name or basename match (e.g. "styles.css" matches "css/styles.css")
+  // Helper: find file content by exact name or basename match
   const findFile = (name: string): string | undefined => {
     if (fileContents[name]) return fileContents[name];
     const byBasename = Object.entries(fileContents).find(
@@ -252,40 +243,14 @@ async function verifyCriteria(
     return byBasename?.[1];
   };
 
-  // Extract code tokens from natural language (HTML tags, CSS props, attribute values, etc.)
-  const extractPatterns = (text: string): string[] => {
-    const patterns: string[] = [];
-    // HTML tags like <main>, </html>, <!DOCTYPE html>
-    const tagMatches = text.match(/<[!/]?\w[\w-]*[^>]*>/g);
-    if (tagMatches) patterns.push(...tagMatches);
-    // CSS patterns like "font-family", "min-height: 100vh", "box-sizing: border-box"
-    const cssMatches = text.match(/[\w-]+:\s*[^,;'")\]]+/g);
-    if (cssMatches) patterns.push(...cssMatches.map((m) => m.trim()));
-    // Quoted strings
-    const quotedMatches = text.match(/['"]([^'"]+)['"]/g);
-    if (quotedMatches) patterns.push(...quotedMatches.map((m) => m.slice(1, -1)));
-    // Class/id references like class 'link-btn', class="profile"
-    const classMatch = text.match(/class\s+['"]?([\w-]+)['"]?/gi);
-    if (classMatch) {
-      for (const m of classMatch) {
-        const val = m.match(/class\s+['"]?([\w-]+)['"]?/i);
-        if (val) patterns.push(val[1]);
-      }
-    }
-    // Element references like <a> tags, <link> tag
-    const elemMatches = text.match(/<(\w+)>/g);
-    if (elemMatches) patterns.push(...elemMatches);
-    return patterns;
-  };
-
-  // Broader regex: "filename contains/has/includes/exists with/has a..."
-  const filePatternMatch = /^(\S+?\.\w+)\s+(?:contains?|has\s+(?:a\s+)?|includes?|exists?\s+with)\s+(.+)$/i;
+  // Pattern: "filename contains literal_text"
+  const fileContainsPattern = /^(\S+?\.\w+)\s+contains?\s+(.+)$/i;
 
   for (const criterion of criteria) {
-    const match = criterion.match(filePatternMatch);
+    const match = criterion.match(fileContainsPattern);
     if (match) {
       const targetFile = match[1];
-      const patternText = match[2].trim();
+      const needle = match[2].trim();
       const content = findFile(targetFile);
 
       if (!content) {
@@ -294,66 +259,28 @@ async function verifyCriteria(
         continue;
       }
 
-      // Try literal match first
-      if (content.includes(patternText)) {
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} contains ${patternText.slice(0, 50)}` } });
-        continue;
-      }
-
-      // Extract code tokens from the natural language pattern and check each
-      const patterns = extractPatterns(patternText);
-      if (patterns.length > 0) {
-        const contentLower = content.toLowerCase();
-        const matched = patterns.filter((p) => contentLower.includes(p.toLowerCase()));
-        if (matched.length > 0 && matched.length >= patterns.length * 0.5) {
-          emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} has ${matched.length}/${patterns.length} expected patterns` } });
-          continue;
-        }
-      }
-
-      failures.push(`${targetFile} missing: ${patternText}`);
-      emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} missing ${patternText.slice(0, 50)}` } });
-    } else {
-      // Check if criterion starts with a filename
-      const filePrefix = criterion.match(/^(\S+?\.\w+)\s+/);
-      if (filePrefix) {
-        const content = findFile(filePrefix[1]);
-        if (content) {
-          // File exists — extract patterns from the rest of the criterion
-          const rest = criterion.slice(filePrefix[0].length);
-          const patterns = extractPatterns(rest);
-          const contentLower = content.toLowerCase();
-          const matched = patterns.filter((p) => contentLower.includes(p.toLowerCase()));
-          if (matched.length > 0) {
-            emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${filePrefix[1]} has ${matched.length} expected patterns` } });
-            continue;
-          }
-        }
-      }
-
-      // Generic: look for extracted patterns or literal text in any file
-      const patterns = extractPatterns(criterion);
-      const allContent = Object.values(fileContents).join("\n").toLowerCase();
-      const matched = patterns.filter((p) => allContent.includes(p.toLowerCase()));
-
-      if (matched.length > 0 && matched.length >= patterns.length * 0.5) {
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found ${matched.length}/${patterns.length} patterns for "${criterion.slice(0, 40)}"` } });
+      if (content.toLowerCase().includes(needle.toLowerCase())) {
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} contains "${needle.slice(0, 40)}"` } });
       } else {
-        const found = Object.values(fileContents).some((content) => content.includes(criterion));
-        if (found) {
-          emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found "${criterion.slice(0, 50)}"` } });
-        } else {
-          failures.push(criterion);
-          emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: "${criterion.slice(0, 50)}" not found` } });
-        }
+        failures.push(`${targetFile} missing: ${needle}`);
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} missing "${needle.slice(0, 40)}"` } });
+      }
+    } else {
+      // Generic: look for the criterion text in any file
+      const allContent = Object.values(fileContents).join("\n").toLowerCase();
+      if (allContent.includes(criterion.toLowerCase())) {
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found "${criterion.slice(0, 50)}"` } });
+      } else {
+        failures.push(criterion);
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: "${criterion.slice(0, 50)}" not found` } });
       }
     }
   }
 
-  return { passed: failures.length === 0, failures, fileContents };
+  return { passed: failures.length === 0, failures };
 }
 
-// ── Haiku reviewer agent ──
+// ── Haiku reviewer agent (only used on final retry) ──
 
 async function runReview(
   anthropic: Anthropic,
@@ -483,12 +410,6 @@ export async function runRalphLoop(
         data: {
           task_id: task.id,
           log: `Task ${taskIdx + 1}/${totalTasks} · Attempt ${attempt}/${MAX_RETRIES_PER_TASK}`,
-          task_index: taskIdx + 1,
-          total_tasks: totalTasks,
-          attempt,
-          max_attempts: MAX_RETRIES_PER_TASK,
-          iteration: sharedState.totalIterations,
-          max_iterations: MAX_ITERATIONS,
         },
       });
 
@@ -523,52 +444,51 @@ export async function runRalphLoop(
             ? `\n\nPrevious tasks completed:\n${completedActions.join("\n")}`
             : "";
 
-        // Include success criteria in the prompt so the worker knows what to target
         const criteriaText = hasCriteria
           ? `\n\nSUCCESS CRITERIA (your output MUST satisfy all of these):\n${task.success_criteria!.map((c, i) => `${i + 1}. ${c}`).join("\n")}`
           : "";
 
-        // ── Fresh Anthropic API call (with heartbeat so UI doesn't look stuck) ──
+        // ── Streaming API call — no timeout needed ──
         emit({
           event: "agent_log",
           data: { task_id: task.id, log: "Generating code..." },
         });
 
-        // Heartbeat: send a dot every 5s while waiting for Claude
-        const heartbeat = setInterval(() => {
-          emit({
-            event: "agent_log",
-            data: { task_id: task.id, log: "..." },
-          });
-        }, 5000);
+        let fullText = "";
+        let inputTokens = 0;
+        let outputTokens = 0;
 
-        let response;
-        try {
-          const apiPromise = anthropic.messages.create({
-            model: "claude-sonnet-4-6",
-            max_tokens: 16384,
-            system: TASK_SYSTEM_PROMPT,
-            messages: [
-              {
-                role: "user",
-                content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${criteriaText}${previousContext}${guardrailsText}\n\nIMPORTANT: Base64 encode ALL file content values. Respond with ONLY the JSON object.`,
-              },
-            ],
-          });
+        const stream = anthropic.messages.stream({
+          model: "claude-sonnet-4-6",
+          max_tokens: 16384,
+          system: TASK_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${criteriaText}${previousContext}${guardrailsText}\n\nRespond with ONLY the JSON object. Use plain text for file content (NOT base64).`,
+            },
+          ],
+        });
 
-          // 300-second timeout on the API call (large responses at ~80 tok/s can take 200s+)
-          const timeout = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Claude API call timed out after 300s")), 300_000)
-          );
+        // Stream tokens — emit periodic heartbeats so the UI stays alive
+        let lastHeartbeat = Date.now();
+        stream.on("text", (text) => {
+          fullText += text;
+          const now = Date.now();
+          if (now - lastHeartbeat > 5000) {
+            lastHeartbeat = now;
+            emit({
+              event: "agent_log",
+              data: { task_id: task.id, log: "..." },
+            });
+          }
+        });
 
-          response = await Promise.race([apiPromise, timeout]);
-        } finally {
-          clearInterval(heartbeat);
-        }
+        const finalMessage = await stream.finalMessage();
+        inputTokens = finalMessage.usage?.input_tokens ?? 0;
+        outputTokens = finalMessage.usage?.output_tokens ?? 0;
 
         // ── Track cost ──
-        const inputTokens = response.usage?.input_tokens ?? 0;
-        const outputTokens = response.usage?.output_tokens ?? 0;
         const callCost = calculateCost(inputTokens, outputTokens);
         costAdded += callCost;
         sharedState.totalCostUsd += callCost;
@@ -583,17 +503,11 @@ export async function runRalphLoop(
         });
 
         // ── Parse response ──
-        const textBlock = response.content.find((b) => b.type === "text");
-        if (!textBlock || textBlock.type !== "text") {
-          throw new Error("No response from AI");
-        }
-
-        const rawText = textBlock.text;
-        const { action, failReason } = parseAgentResponse(rawText);
+        const { action, failReason } = parseAgentResponse(fullText);
 
         // Debug: log start of response when parse fails
         if (!action && !failReason) {
-          const preview = stripHtml(rawText.slice(0, 300)).replace(/\n/g, " ");
+          const preview = stripHtml(fullText.slice(0, 300)).replace(/\n/g, " ");
           emit({
             event: "agent_log",
             data: {
@@ -624,7 +538,7 @@ export async function runRalphLoop(
           await db.from("guardrails").insert({
             project_id: projectId,
             task_label: task.label,
-            sign: "AI returned unparseable response — base64 encode file content values in JSON",
+            sign: "AI returned unparseable response — return a valid JSON object with plain text file content",
           });
 
           emit({
@@ -635,7 +549,7 @@ export async function runRalphLoop(
         }
 
         // ── Execute action: write files ──
-        if (action.files && Array.isArray(action.files)) {
+        if (action.files && action.files.length > 0) {
           const validFiles = action.files.filter((f) => f.path && f.content);
           if (validFiles.length > 0) {
             await writeFiles(
@@ -657,7 +571,7 @@ export async function runRalphLoop(
         }
 
         // ── Execute action: run commands ──
-        if (action.commands && Array.isArray(action.commands)) {
+        if (action.commands && action.commands.length > 0) {
           for (const cmd of action.commands.slice(0, 5)) {
             const shortCmd = cmd.length > 80 ? cmd.slice(0, 77) + "..." : cmd;
             emit({
@@ -698,14 +612,14 @@ export async function runRalphLoop(
           taskSummary = action.summary;
         }
 
-        // ── VERIFICATION: check success criteria against actual files ──
+        // ── VERIFICATION ──
         if (hasCriteria) {
           emit({
             event: "agent_log",
             data: { task_id: task.id, log: "Verifying success criteria..." },
           });
 
-          // Build a fallback map from the files we just wrote (avoids empty reads during parallel execution)
+          // Build file map: start with what we just wrote, then overlay sandbox reads
           const writtenFiles: Record<string, string> = {};
           if (action.files) {
             for (const f of action.files) {
@@ -714,65 +628,59 @@ export async function runRalphLoop(
             }
           }
 
-          const { passed, failures, fileContents: verifyContents } = await verifyCriteria(
-            sandbox,
+          const sandboxFiles = await readAllProjectFiles(sandbox);
+          const allFiles = { ...writtenFiles, ...sandboxFiles };
+
+          const { passed, failures } = verifyCriteriaLocally(
+            allFiles,
             task.success_criteria!,
             emit,
-            task.id,
-            writtenFiles
+            task.id
           );
 
           if (!passed) {
-            // ── REVIEWER: Haiku cross-checks ──
-            emit({
-              event: "agent_log",
-              data: { task_id: task.id, log: "Running reviewer agent..." },
-            });
-
-            // Reuse file contents from verification (avoids redundant sandbox reads)
-            try {
-              const review = await runReview(anthropic, task.label, task.success_criteria!, verifyContents);
-              costAdded += review.cost;
-              sharedState.totalCostUsd += review.cost;
-
-              if (review.passed) {
-                emit({
-                  event: "agent_log",
-                  data: { task_id: task.id, log: "Reviewer: PASS — criteria satisfied" },
-                });
-                taskComplete = true;
-                break;
-              } else {
-                emit({
-                  event: "agent_log",
-                  data: { task_id: task.id, log: `Reviewer: FAIL — ${stripHtml(review.reason)}` },
-                });
-
-                // Add failure as guardrail for retry
-                const failDetail = failures.join("; ");
-                await db.from("guardrails").insert({
-                  project_id: projectId,
-                  task_label: task.label,
-                  sign: `Verification failed: ${failDetail}. Reviewer: ${review.reason}`,
-                });
-                continue; // retry with guardrail
-              }
-            } catch (reviewErr) {
-              // If review fails, fall back to criteria check result
-              const msg = reviewErr instanceof Error ? reviewErr.message : "Review failed";
+            // Only call the expensive reviewer on the LAST retry attempt
+            if (attempt === MAX_RETRIES_PER_TASK) {
               emit({
                 event: "agent_log",
-                data: { task_id: task.id, log: `Reviewer error: ${stripHtml(msg)} — using criteria check` },
+                data: { task_id: task.id, log: "Running reviewer agent (final check)..." },
               });
 
-              const failDetail = failures.join("; ");
-              await db.from("guardrails").insert({
-                project_id: projectId,
-                task_label: task.label,
-                sign: `Verification failed: ${failDetail}`,
-              });
-              continue;
+              try {
+                const review = await runReview(anthropic, task.label, task.success_criteria!, allFiles);
+                costAdded += review.cost;
+                sharedState.totalCostUsd += review.cost;
+
+                if (review.passed) {
+                  emit({
+                    event: "agent_log",
+                    data: { task_id: task.id, log: "Reviewer: PASS — criteria satisfied" },
+                  });
+                  taskComplete = true;
+                  break;
+                } else {
+                  emit({
+                    event: "agent_log",
+                    data: { task_id: task.id, log: `Reviewer: FAIL — ${stripHtml(review.reason)}` },
+                  });
+                }
+              } catch (reviewErr) {
+                const msg = reviewErr instanceof Error ? reviewErr.message : "Review failed";
+                emit({
+                  event: "agent_log",
+                  data: { task_id: task.id, log: `Reviewer error: ${stripHtml(msg)}` },
+                });
+              }
             }
+
+            // Add failure as guardrail for retry
+            const failDetail = failures.join("; ");
+            await db.from("guardrails").insert({
+              project_id: projectId,
+              task_label: task.label,
+              sign: `Verification failed: ${failDetail}`,
+            });
+            continue;
           }
 
           emit({
@@ -860,7 +768,6 @@ export async function runRalphLoop(
     const group = groups.get(groupKey)!;
 
     if (group.length === 1) {
-      // Single task — run sequentially (no overhead)
       const { task, globalIdx } = group[0];
       const result = await executeTask(task, globalIdx, sorted.length);
       if (result.summary) {
@@ -882,7 +789,6 @@ export async function runRalphLoop(
         )
       );
 
-      // Collect summaries from all parallel tasks
       for (let i = 0; i < results.length; i++) {
         if (results[i].summary) {
           completedActions.push(
