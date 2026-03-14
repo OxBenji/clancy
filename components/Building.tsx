@@ -38,9 +38,11 @@ export default function Building({
   const [costLimit, setCostLimit] = useState(2.0);
   const [budgetExceeded, setBudgetExceeded] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("log");
+  const [waiting, setWaiting] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const started = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const waitingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function handleSave() {
     setSaving(true);
@@ -65,6 +67,19 @@ export default function Building({
     if (!error) setSaved(true);
   }
 
+  const resetWaitingTimer = useCallback(() => {
+    setWaiting(false);
+    if (waitingTimer.current) clearTimeout(waitingTimer.current);
+    waitingTimer.current = setTimeout(() => setWaiting(true), 5000);
+  }, []);
+
+  // Clean up waiting timer on unmount
+  useEffect(() => {
+    return () => {
+      if (waitingTimer.current) clearTimeout(waitingTimer.current);
+    };
+  }, []);
+
   const handleSSE = useCallback(
     (
       event: string,
@@ -83,6 +98,8 @@ export default function Building({
         limit_usd?: number;
       }
     ) => {
+      resetWaitingTimer();
+
       switch (event) {
         case "task_start":
           setTasks((prev) =>
@@ -175,6 +192,8 @@ export default function Building({
           break;
 
         case "build_complete":
+          setWaiting(false);
+          if (waitingTimer.current) clearTimeout(waitingTimer.current);
           setComplete(true);
           setLogs((prev) => [
             ...prev,
@@ -183,7 +202,7 @@ export default function Building({
           break;
       }
     },
-    []
+    [resetWaitingTimer]
   );
 
   useEffect(() => {
@@ -218,6 +237,7 @@ export default function Building({
     };
 
     async function runStream() {
+      resetWaitingTimer();
       try {
         const res = await fetch("/api/run-agent", {
           method: "POST",
@@ -267,7 +287,7 @@ export default function Building({
     return () => {
       abortController.abort();
     };
-  }, [initialTasks, projectId, description, handleSSE]);
+  }, [initialTasks, projectId, description, handleSSE, resetWaitingTimer]);
 
   function handleCancel() {
     if (abortRef.current) {
@@ -540,7 +560,14 @@ export default function Building({
                     </div>
                   ))}
                   {!complete && logs.length > 0 && (
-                    <span className="inline-block w-2 h-4 bg-accent/70 animate-pulse ml-2 mt-1" />
+                    <div className="flex items-center gap-2 ml-2 mt-1">
+                      <span className="inline-block w-2 h-4 bg-accent/70 animate-pulse" />
+                      {waiting && (
+                        <span className="text-slate-500 text-xs animate-pulse">
+                          Generating code&hellip;
+                        </span>
+                      )}
+                    </div>
                   )}
                   <div ref={logEndRef} />
                 </div>
