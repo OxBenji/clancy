@@ -295,7 +295,20 @@ export async function runRalphLoop(
           throw new Error("No response from AI");
         }
 
-        const { action, complete, failReason } = parseAgentResponse(textBlock.text);
+        const rawText = textBlock.text;
+        const { action, complete, failReason } = parseAgentResponse(rawText);
+
+        // Debug: log start of response when parse fails
+        if (!action && !failReason) {
+          const preview = stripHtml(rawText.slice(0, 300)).replace(/\n/g, " ");
+          emit({
+            event: "agent_log",
+            data: {
+              task_id: task.id,
+              log: `[DEBUG] Response starts with: ${preview}`,
+            },
+          });
+        }
 
         if (failReason) {
           // Write guardrail sign
