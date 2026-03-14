@@ -162,6 +162,7 @@ export async function POST(request: Request) {
 
         const anthropic = new Anthropic({
           apiKey: process.env.ANTHROPIC_API_KEY,
+          timeout: 5 * 60 * 1000,
         });
 
         const response = await anthropic.messages.create({

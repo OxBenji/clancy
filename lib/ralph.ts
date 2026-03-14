@@ -347,7 +347,10 @@ export async function runRalphLoop(
     return { totalCostUsd: 0, totalIterations: 0 };
   }
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    timeout: 5 * 60 * 1000, // 5 minutes — large code gen can take a while
+  });
 
   let totalCostUsd = 0;
   let totalIterations = 0;

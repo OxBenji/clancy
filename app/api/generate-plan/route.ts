@@ -102,7 +102,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 5 * 60 * 1000 });
 
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
