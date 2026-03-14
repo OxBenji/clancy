@@ -223,7 +223,7 @@ export async function runRalphLoop(
             ? `\n\nPrevious tasks completed:\n${completedActions.join("\n")}`
             : "";
 
-        // ── Fresh Anthropic API call ──
+        // ── Fresh Anthropic API call with assistant prefill to force JSON ──
         const response = await anthropic.messages.create({
           model: "claude-sonnet-4-6",
           max_tokens: 4096,
@@ -232,6 +232,10 @@ export async function runRalphLoop(
             {
               role: "user",
               content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${previousContext}${guardrailsText}`,
+            },
+            {
+              role: "assistant",
+              content: "{",
             },
           ],
         });
@@ -257,7 +261,8 @@ export async function runRalphLoop(
           throw new Error("No response from AI");
         }
 
-        const { action, complete, failReason } = parseAgentResponse(textBlock.text);
+        // Prepend "{" since we used assistant prefill
+        const { action, complete, failReason } = parseAgentResponse("{" + textBlock.text);
 
         if (failReason) {
           // Write guardrail sign
