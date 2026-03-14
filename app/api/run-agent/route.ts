@@ -126,17 +126,18 @@ export async function POST(request: Request) {
         let previewUrl: string | null = null;
 
         try {
+          // Use E2B's background option — shell & doesn't work reliably
           await runCommandStreaming(
             sandbox,
-            "cd /home/user/project && python3 -m http.server 3000 &",
-            { timeoutMs: 5_000 }
+            "cd /home/user/project && python3 -m http.server 3000",
+            { timeoutMs: 10_000, background: true }
           );
 
           // Give server a moment to bind
-          await new Promise((r) => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 3000));
           previewUrl = getPreviewUrl(sandbox, 3000);
         } catch {
-          // Even if the server command "fails" (background process), still try the URL
+          // Even if the server command "fails", still try the URL
           try {
             previewUrl = getPreviewUrl(sandbox, 3000);
           } catch {
@@ -155,8 +156,16 @@ export async function POST(request: Request) {
               { timeoutMs: 10_000 }
             );
             previewHealthy = healthCheck.stdout.trim() === "200";
-          } catch {
+            send("agent_log", {
+              task_id: "system",
+              log: `Health check: HTTP ${healthCheck.stdout.trim()}`,
+            });
+          } catch (healthErr) {
             previewHealthy = false;
+            send("agent_log", {
+              task_id: "system",
+              log: `Health check error: ${healthErr instanceof Error ? healthErr.message : "unknown"}`,
+            });
           }
 
           if (!previewHealthy) {
@@ -186,10 +195,10 @@ export async function POST(request: Request) {
               await runCommandStreaming(sandbox, "pkill -f 'python3 -m http.server' || true", { timeoutMs: 5_000 });
               await runCommandStreaming(
                 sandbox,
-                "cd /home/user/project && python3 -m http.server 3000 &",
-                { timeoutMs: 5_000 }
+                "cd /home/user/project && python3 -m http.server 3000",
+                { timeoutMs: 10_000, background: true }
               );
-              await new Promise((r) => setTimeout(r, 2000));
+              await new Promise((r) => setTimeout(r, 3000));
             } catch {
               // best effort
             }
