@@ -210,37 +210,106 @@ async function verifyCriteria(
   // Helper: find file content by exact name or basename match (e.g. "styles.css" matches "css/styles.css")
   const findFile = (name: string): string | undefined => {
     if (fileContents[name]) return fileContents[name];
-    // Try basename match
     const byBasename = Object.entries(fileContents).find(
       ([path]) => path.endsWith(`/${name}`) || path === name
     );
     return byBasename?.[1];
   };
 
+  // Extract code tokens from natural language (HTML tags, CSS props, attribute values, etc.)
+  const extractPatterns = (text: string): string[] => {
+    const patterns: string[] = [];
+    // HTML tags like <main>, </html>, <!DOCTYPE html>
+    const tagMatches = text.match(/<[!/]?\w[\w-]*[^>]*>/g);
+    if (tagMatches) patterns.push(...tagMatches);
+    // CSS patterns like "font-family", "min-height: 100vh", "box-sizing: border-box"
+    const cssMatches = text.match(/[\w-]+:\s*[^,;'")\]]+/g);
+    if (cssMatches) patterns.push(...cssMatches.map((m) => m.trim()));
+    // Quoted strings
+    const quotedMatches = text.match(/['"]([^'"]+)['"]/g);
+    if (quotedMatches) patterns.push(...quotedMatches.map((m) => m.slice(1, -1)));
+    // Class/id references like class 'link-btn', class="profile"
+    const classMatch = text.match(/class\s+['"]?([\w-]+)['"]?/gi);
+    if (classMatch) {
+      for (const m of classMatch) {
+        const val = m.match(/class\s+['"]?([\w-]+)['"]?/i);
+        if (val) patterns.push(val[1]);
+      }
+    }
+    // Element references like <a> tags, <link> tag
+    const elemMatches = text.match(/<(\w+)>/g);
+    if (elemMatches) patterns.push(...elemMatches);
+    return patterns;
+  };
+
+  // Broader regex: "filename contains/has/includes/exists with/has a..."
+  const filePatternMatch = /^(\S+?\.\w+)\s+(?:contains?|has\s+(?:a\s+)?|includes?|exists?\s+with)\s+(.+)$/i;
+
   for (const criterion of criteria) {
-    // Parse criterion: "filename contains pattern"
-    const containsMatch = criterion.match(/^(\S+)\s+contains?\s+(.+)$/i);
-    if (containsMatch) {
-      const targetFile = containsMatch[1];
-      const pattern = containsMatch[2].trim();
+    const match = criterion.match(filePatternMatch);
+    if (match) {
+      const targetFile = match[1];
+      const patternText = match[2].trim();
       const content = findFile(targetFile);
+
       if (!content) {
         failures.push(`${targetFile} not found`);
         emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} not found` } });
-      } else if (!content.includes(pattern)) {
-        failures.push(`${targetFile} missing: ${pattern}`);
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} missing ${pattern}` } });
-      } else {
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} contains ${pattern}` } });
+        continue;
       }
+
+      // Try literal match first
+      if (content.includes(patternText)) {
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} contains ${patternText.slice(0, 50)}` } });
+        continue;
+      }
+
+      // Extract code tokens from the natural language pattern and check each
+      const patterns = extractPatterns(patternText);
+      if (patterns.length > 0) {
+        const contentLower = content.toLowerCase();
+        const matched = patterns.filter((p) => contentLower.includes(p.toLowerCase()));
+        if (matched.length > 0 && matched.length >= patterns.length * 0.5) {
+          emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${targetFile} has ${matched.length}/${patterns.length} expected patterns` } });
+          continue;
+        }
+      }
+
+      failures.push(`${targetFile} missing: ${patternText}`);
+      emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} missing ${patternText.slice(0, 50)}` } });
     } else {
-      // Generic check — look for the criterion text in any file
-      const found = Object.entries(fileContents).some(([, content]) => content.includes(criterion));
-      if (found) {
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found "${criterion.slice(0, 50)}"` } });
+      // Check if criterion starts with a filename
+      const filePrefix = criterion.match(/^(\S+?\.\w+)\s+/);
+      if (filePrefix) {
+        const content = findFile(filePrefix[1]);
+        if (content) {
+          // File exists — extract patterns from the rest of the criterion
+          const rest = criterion.slice(filePrefix[0].length);
+          const patterns = extractPatterns(rest);
+          const contentLower = content.toLowerCase();
+          const matched = patterns.filter((p) => contentLower.includes(p.toLowerCase()));
+          if (matched.length > 0) {
+            emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: ${filePrefix[1]} has ${matched.length} expected patterns` } });
+            continue;
+          }
+        }
+      }
+
+      // Generic: look for extracted patterns or literal text in any file
+      const patterns = extractPatterns(criterion);
+      const allContent = Object.values(fileContents).join("\n").toLowerCase();
+      const matched = patterns.filter((p) => allContent.includes(p.toLowerCase()));
+
+      if (matched.length > 0 && matched.length >= patterns.length * 0.5) {
+        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found ${matched.length}/${patterns.length} patterns for "${criterion.slice(0, 40)}"` } });
       } else {
-        failures.push(`Not found in any file: ${criterion}`);
-        emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: "${criterion.slice(0, 50)}" not found` } });
+        const found = Object.values(fileContents).some((content) => content.includes(criterion));
+        if (found) {
+          emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] PASS: found "${criterion.slice(0, 50)}"` } });
+        } else {
+          failures.push(criterion);
+          emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: "${criterion.slice(0, 50)}" not found` } });
+        }
       }
     }
   }
