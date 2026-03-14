@@ -94,6 +94,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: descResult.error }, { status: 400 });
   }
 
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return NextResponse.json(
+      { error: "Server configuration error: ANTHROPIC_API_KEY is not set" },
+      { status: 500 }
+    );
+  }
+
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 

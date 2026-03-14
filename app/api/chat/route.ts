@@ -43,6 +43,13 @@ export async function POST(request: Request) {
     });
   }
 
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return new Response(
+      JSON.stringify({ error: "Server configuration error: ANTHROPIC_API_KEY is not set" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 

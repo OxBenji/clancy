@@ -89,6 +89,13 @@ function parseResponse(text: string): EditAction | null {
 }
 
 export async function POST(request: Request) {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return new Response(
+      JSON.stringify({ error: "Server configuration error: ANTHROPIC_API_KEY is not set" }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
   const ip = getRequestIP(request);
   const rl = rateLimit(`edit-project:${ip}`, { maxRequests: 15, windowMs: 60_000 });
   if (!rl.allowed) {
