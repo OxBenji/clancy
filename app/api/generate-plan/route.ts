@@ -12,7 +12,13 @@ const SYSTEM_PROMPT = `You are a project planner. Break the user's description i
 
 For each task return:
 - label: one clear action sentence
-- success_criteria: array of 3-5 file-checkable conditions (e.g. "index.html contains <nav>", "styles.css contains .hero class")
+- success_criteria: array of 3-5 conditions. CRITICAL FORMAT: every criterion MUST use the pattern "filename contains literal_text_to_find". Examples:
+  - "index.html contains <nav"
+  - "index.html contains class=\\"profile\\""
+  - "styles.css contains .hero"
+  - "styles.css contains border-radius"
+  - "index.html contains <!DOCTYPE html>"
+  Do NOT use natural language like "has a", "exists with", "includes a section for". Only use "contains" with a literal code snippet that will appear in the file.
 - estimated_seconds: 20-60
 - order_index: number starting at 1
 
