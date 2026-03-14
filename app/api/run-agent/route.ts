@@ -2,8 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import {
   createProjectSandbox,
-  writeFile,
-  runCommand,
+  writeFiles,
+  runCommandStreaming,
   getPreviewUrl,
 } from "@/lib/sandbox";
 
@@ -49,7 +49,6 @@ function sseEvent(event: string, data: Record<string, unknown>): string {
 function parseAgentResponse(text: string): AgentAction | null {
   let jsonText = text.trim();
 
-  // Strip markdown code fences
   if (jsonText.startsWith("```")) {
     jsonText = jsonText
       .replace(/^```(?:json)?\s*\n?/, "")
@@ -59,7 +58,6 @@ function parseAgentResponse(text: string): AgentAction | null {
   try {
     return JSON.parse(jsonText);
   } catch {
-    // Try to find JSON object within the text
     const match = jsonText.match(/\{[\s\S]*\}/);
     if (match) {
       try {
@@ -110,13 +108,12 @@ export async function POST(request: Request) {
         try {
           controller.enqueue(encoder.encode(sseEvent(event, data)));
         } catch {
-          // Controller may be closed if client disconnected
+          // Controller may be closed
         }
       };
 
       const db = getSupabaseAdmin();
 
-      // Insert tasks into Supabase
       const taskRows = sorted.map((t) => ({
         id: t.id,
         project_id,
@@ -127,7 +124,6 @@ export async function POST(request: Request) {
       await db.from("tasks").insert(taskRows);
 
       try {
-        // Create E2B sandbox
         send("agent_log", {
           task_id: "system",
           log: "Spinning up sandbox environment...",
@@ -135,19 +131,20 @@ export async function POST(request: Request) {
 
         const sandbox = await createProjectSandbox();
 
+        // Send sandbox ID so client can reconnect later
+        send("sandbox_id", { id: sandbox.sandboxId });
+
         send("agent_log", {
           task_id: "system",
-          log: "Sandbox ready. Starting build...",
+          log: `Sandbox ready (${sandbox.sandboxId}). Starting build...`,
         });
 
-        // Create project directory
-        await runCommand(sandbox, "mkdir -p /home/user/project");
+        await runCommandStreaming(sandbox, "mkdir -p /home/user/project");
 
         const anthropic = new Anthropic({
           apiKey: process.env.ANTHROPIC_API_KEY,
         });
 
-        // Build context of what's been done so far
         const completedActions: string[] = [];
 
         for (const task of sorted) {
@@ -161,7 +158,6 @@ export async function POST(request: Request) {
             .eq("id", task.id);
 
           try {
-            // Ask Claude to generate code for this task
             const contextMsg =
               completedActions.length > 0
                 ? `\n\nPrevious tasks completed:\n${completedActions.join("\n")}`
@@ -191,32 +187,35 @@ export async function POST(request: Request) {
               throw new Error("AI returned invalid format");
             }
 
-            // Write files to sandbox
+            // Write files to sandbox (batch)
             if (action.files && Array.isArray(action.files)) {
-              for (const file of action.files) {
-                if (file.path && file.content) {
-                  // Ensure parent directory exists
-                  const dir = file.path.substring(
-                    0,
-                    file.path.lastIndexOf("/")
+              const validFiles = action.files.filter(
+                (f) => f.path && f.content
+              );
+              if (validFiles.length > 0) {
+                await writeFiles(
+                  sandbox,
+                  validFiles.map((f) => ({ path: f.path, data: f.content }))
+                );
+                for (const file of validFiles) {
+                  const shortPath = file.path.replace(
+                    "/home/user/project/",
+                    ""
                   );
-                  await runCommand(sandbox, `mkdir -p ${dir}`);
-                  await writeFile(sandbox, file.path, file.content);
                   send("agent_log", {
                     task_id: task.id,
-                    log: `Created ${file.path.replace("/home/user/project/", "")}`,
+                    log: `Created ${shortPath}`,
                   });
-                  // Send file content to client
                   send("file_created", {
                     task_id: task.id,
-                    path: file.path.replace("/home/user/project/", ""),
+                    path: shortPath,
                     content: file.content,
                   });
                 }
               }
             }
 
-            // Run commands in sandbox
+            // Run commands with real-time streaming
             if (action.commands && Array.isArray(action.commands)) {
               for (const cmd of action.commands) {
                 send("agent_log", {
@@ -224,20 +223,28 @@ export async function POST(request: Request) {
                   log: `$ ${cmd}`,
                 });
                 try {
-                  const result = await runCommand(sandbox, cmd, {
+                  let lineBuffer = "";
+                  const result = await runCommandStreaming(sandbox, cmd, {
                     timeoutMs: 120_000,
+                    onStdout: (chunk) => {
+                      lineBuffer += chunk;
+                      const lines = lineBuffer.split("\n");
+                      lineBuffer = lines.pop() || "";
+                      for (const line of lines) {
+                        if (line.trim()) {
+                          send("agent_log", {
+                            task_id: task.id,
+                            log: line.trim(),
+                          });
+                        }
+                      }
+                    },
                   });
-                  if (result.stdout.trim()) {
-                    // Send first few lines of output
-                    const lines = result.stdout.trim().split("\n");
-                    const preview =
-                      lines.length > 5
-                        ? lines.slice(0, 5).join("\n") +
-                          `\n... (${lines.length - 5} more lines)`
-                        : result.stdout.trim();
+                  // Flush remaining buffer
+                  if (lineBuffer.trim()) {
                     send("agent_log", {
                       task_id: task.id,
-                      log: preview,
+                      log: lineBuffer.trim(),
                     });
                   }
                   if (result.exitCode !== 0 && result.stderr.trim()) {
@@ -290,51 +297,45 @@ export async function POST(request: Request) {
           }
         }
 
-        // Try to start a simple server and get preview URL
+        // Start preview server
         send("agent_log", {
           task_id: "system",
           log: "Starting preview server...",
         });
 
         try {
-          // Check if there's a package.json with a start/dev script
-          const checkPkg = await runCommand(
+          const checkPkg = await runCommandStreaming(
             sandbox,
             "cat /home/user/project/package.json 2>/dev/null || echo '{}'"
           );
           const hasPkg = checkPkg.stdout.includes('"scripts"');
 
           if (hasPkg) {
-            // Try npm start or npm run dev
-            await runCommand(
+            await runCommandStreaming(
               sandbox,
               "cd /home/user/project && npm run dev -- --port 3000 &>/dev/null &",
               { background: true, timeoutMs: 10_000 }
-            ).catch(() => {
-              // fallback: try npm start
-              return runCommand(
+            ).catch(() =>
+              runCommandStreaming(
                 sandbox,
                 "cd /home/user/project && npm start &>/dev/null &",
                 { background: true, timeoutMs: 10_000 }
-              );
-            });
+              )
+            );
           } else {
-            // Use a simple static server for HTML files
-            await runCommand(
+            await runCommandStreaming(
               sandbox,
               "cd /home/user/project && npx -y serve -l 3000 &>/dev/null &",
               { background: true, timeoutMs: 30_000 }
-            ).catch(() => {
-              // Fallback to python http server
-              return runCommand(
+            ).catch(() =>
+              runCommandStreaming(
                 sandbox,
                 "cd /home/user/project && python3 -m http.server 3000 &",
                 { background: true, timeoutMs: 10_000 }
-              );
-            });
+              )
+            );
           }
 
-          // Give the server a moment to start
           await new Promise((r) => setTimeout(r, 2000));
 
           const previewUrl = getPreviewUrl(sandbox, 3000);
@@ -350,7 +351,6 @@ export async function POST(request: Request) {
           });
         }
 
-        // Update project status
         await db
           .from("projects")
           .update({ status: "complete" })
@@ -370,9 +370,6 @@ export async function POST(request: Request) {
           message: "Build encountered errors. Check the log above.",
         });
       }
-
-      // Don't kill sandbox immediately — keep it alive for preview
-      // It will auto-expire after the timeout (5 min)
 
       controller.close();
     },

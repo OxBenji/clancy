@@ -2,12 +2,13 @@
 
 import { useState, useCallback } from "react";
 import Landing from "@/components/Landing";
+import TemplateGrid from "@/components/TemplateGrid";
 import Create from "@/components/Create";
 import Planning from "@/components/Planning";
 import Building from "@/components/Building";
+import CodingChat from "@/components/CodingChat";
 import type { PlanTask } from "@/lib/types";
-
-type View = "landing" | "create" | "planning" | "building";
+type View = "landing" | "templates" | "create" | "planning" | "building" | "chat";
 
 export default function Home() {
   const [view, setView] = useState<View>("landing");
@@ -34,9 +35,30 @@ export default function Home() {
 
   switch (view) {
     case "landing":
-      return <Landing onStart={() => setView("create")} />;
+      return (
+        <Landing
+          onStart={() => setView("templates")}
+          onChat={() => setView("chat")}
+        />
+      );
+    case "templates":
+      return (
+        <TemplateGrid
+          onSelect={(t) => {
+            setDescription(t.prompt);
+            setView("create");
+          }}
+          onCustom={() => setView("create")}
+        />
+      );
     case "create":
-      return <Create onPlan={handlePlan} onBack={handleReset} />;
+      return (
+        <Create
+          onPlan={handlePlan}
+          onBack={() => setView("templates")}
+          initialDescription={description}
+        />
+      );
     case "planning":
       return (
         <Planning
@@ -54,5 +76,7 @@ export default function Home() {
           onBack={handleReset}
         />
       );
+    case "chat":
+      return <CodingChat onBack={handleReset} />;
   }
 }

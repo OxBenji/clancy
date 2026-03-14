@@ -1,26 +1,27 @@
 import { Sandbox } from "e2b";
 
-export interface SandboxSession {
-  sandbox: Sandbox;
-  previewUrl: string | null;
-}
-
 /**
- * Creates an E2B sandbox, writes project files, installs deps,
- * and starts a dev server. Returns the sandbox + preview URL.
- *
- * Callers must call sandbox.kill() when done.
+ * Creates an E2B sandbox with a 10-minute timeout.
  */
 export async function createProjectSandbox(): Promise<Sandbox> {
   const sandbox = await Sandbox.create({
     apiKey: process.env.E2B_API_KEY,
-    timeoutMs: 5 * 60 * 1000, // 5 min timeout
+    timeoutMs: 10 * 60 * 1000,
   });
   return sandbox;
 }
 
 /**
- * Write a file into the sandbox.
+ * Reconnect to an existing sandbox by ID.
+ */
+export async function reconnectSandbox(sandboxId: string): Promise<Sandbox> {
+  return await Sandbox.connect(sandboxId, {
+    apiKey: process.env.E2B_API_KEY,
+  });
+}
+
+/**
+ * Write a single file into the sandbox.
  */
 export async function writeFile(
   sandbox: Sandbox,
@@ -31,23 +32,58 @@ export async function writeFile(
 }
 
 /**
- * Run a shell command in the sandbox and return stdout.
- * Throws on non-zero exit code.
+ * Write multiple files into the sandbox at once.
  */
-export async function runCommand(
+export async function writeFiles(
+  sandbox: Sandbox,
+  files: { path: string; data: string }[]
+): Promise<void> {
+  for (const file of files) {
+    const dir = file.path.substring(0, file.path.lastIndexOf("/"));
+    await sandbox.commands.run(`mkdir -p ${dir}`, { timeoutMs: 5_000 });
+    await sandbox.files.write(file.path, file.data);
+  }
+}
+
+/**
+ * Run a shell command with real-time streaming callbacks.
+ */
+export async function runCommandStreaming(
   sandbox: Sandbox,
   cmd: string,
-  opts?: { timeoutMs?: number; background?: boolean }
+  opts: {
+    timeoutMs?: number;
+    background?: boolean;
+    onStdout?: (line: string) => void;
+    onStderr?: (line: string) => void;
+  } = {}
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const result = await sandbox.commands.run(cmd, {
-    timeoutMs: opts?.timeoutMs ?? 60_000,
-    background: opts?.background ?? false,
+    timeoutMs: opts.timeoutMs ?? 60_000,
+    background: opts.background ?? false,
+    onStdout: opts.onStdout
+      ? (data) => opts.onStdout!(String(data))
+      : undefined,
+    onStderr: opts.onStderr
+      ? (data) => opts.onStderr!(String(data))
+      : undefined,
   });
   return {
     stdout: result.stdout,
     stderr: result.stderr,
     exitCode: result.exitCode ?? 0,
   };
+}
+
+/**
+ * Run a shell command (simple, no streaming).
+ */
+export async function runCommand(
+  sandbox: Sandbox,
+  cmd: string,
+  opts?: { timeoutMs?: number; background?: boolean }
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return runCommandStreaming(sandbox, cmd, opts);
 }
 
 /**
