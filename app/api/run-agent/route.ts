@@ -223,13 +223,14 @@ export async function POST(request: Request) {
                   log: `$ ${cmd}`,
                 });
                 try {
-                  let lineBuffer = "";
+                  let stdoutBuf = "";
+                  let stderrBuf = "";
                   const result = await runCommandStreaming(sandbox, cmd, {
                     timeoutMs: 120_000,
                     onStdout: (chunk) => {
-                      lineBuffer += chunk;
-                      const lines = lineBuffer.split("\n");
-                      lineBuffer = lines.pop() || "";
+                      stdoutBuf += chunk;
+                      const lines = stdoutBuf.split("\n");
+                      stdoutBuf = lines.pop() || "";
                       for (const line of lines) {
                         if (line.trim()) {
                           send("agent_log", {
@@ -239,18 +240,37 @@ export async function POST(request: Request) {
                         }
                       }
                     },
+                    onStderr: (chunk) => {
+                      stderrBuf += chunk;
+                      const lines = stderrBuf.split("\n");
+                      stderrBuf = lines.pop() || "";
+                      for (const line of lines) {
+                        if (line.trim()) {
+                          send("agent_log", {
+                            task_id: task.id,
+                            log: `stderr: ${line.trim()}`,
+                          });
+                        }
+                      }
+                    },
                   });
-                  // Flush remaining buffer
-                  if (lineBuffer.trim()) {
+                  // Flush remaining buffers
+                  if (stdoutBuf.trim()) {
                     send("agent_log", {
                       task_id: task.id,
-                      log: lineBuffer.trim(),
+                      log: stdoutBuf.trim(),
                     });
                   }
-                  if (result.exitCode !== 0 && result.stderr.trim()) {
+                  if (stderrBuf.trim()) {
                     send("agent_log", {
                       task_id: task.id,
-                      log: `Warning: ${result.stderr.trim().split("\n").slice(0, 3).join("\n")}`,
+                      log: `stderr: ${stderrBuf.trim()}`,
+                    });
+                  }
+                  if (result.exitCode !== 0) {
+                    send("agent_log", {
+                      task_id: task.id,
+                      log: `Exit code: ${result.exitCode}`,
                     });
                   }
                 } catch (cmdErr) {
