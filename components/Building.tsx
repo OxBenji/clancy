@@ -279,6 +279,70 @@ export default function Building({
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("SSE stream error:", err);
+
+        // ── Resilience: recover state from DB on stream disconnect ──
+        try {
+          const { data: dbTasks } = await supabase
+            .from("tasks")
+            .select("id, status, duration_seconds")
+            .eq("project_id", projectId);
+
+          if (dbTasks && dbTasks.length > 0) {
+            const taskRecords = dbTasks as { id: string; status: string; duration_seconds?: number }[];
+            setTasks((prev) =>
+              prev.map((t) => {
+                const dbTask = taskRecords.find((d) => d.id === t.id);
+                if (!dbTask) return t;
+                return {
+                  ...t,
+                  status: dbTask.status === "done"
+                    ? "done" as const
+                    : dbTask.status === "error"
+                    ? "error" as const
+                    : dbTask.status === "active"
+                    ? "active" as const
+                    : t.status,
+                  duration: dbTask.duration_seconds ?? t.duration,
+                };
+              })
+            );
+
+            // Check if all tasks are done or errored
+            const allFinished = taskRecords.every(
+              (d) => d.status === "done" || d.status === "error"
+            );
+            if (allFinished) {
+              setComplete(true);
+              setLogs((prev) => [
+                ...prev,
+                {
+                  task_id: "system",
+                  text: "--- Connection lost but build finished. State recovered from database. ---",
+                  ts: Date.now(),
+                },
+              ]);
+            } else {
+              setLogs((prev) => [
+                ...prev,
+                {
+                  task_id: "system",
+                  text: "--- Connection lost. Progress recovered from database. Build may still be running. ---",
+                  ts: Date.now(),
+                },
+              ]);
+            }
+          }
+        } catch {
+          // DB recovery also failed — show generic error
+          setLogs((prev) => [
+            ...prev,
+            {
+              task_id: "system",
+              text: "--- Connection lost. Could not recover state. ---",
+              ts: Date.now(),
+            },
+          ]);
+        }
       }
     }
 
