@@ -56,6 +56,7 @@ RESPONSE FORMAT — return ONLY a JSON object, no markdown fences, no explanatio
 }
 
 RULES:
+- STRICT: Each task creates or modifies exactly ONE file. A task that touches index.html must ONLY touch index.html. Never combine multiple files in one task. If unsure, make it smaller.
 - "content" is the RAW file content as a JSON string (escape newlines as \\n, quotes as \\")
 - Do NOT base64 encode anything — use plain text
 - All file paths must be absolute, under /home/user/project/
@@ -468,7 +469,7 @@ export async function runRalphLoop(
 
         const stream = anthropic.messages.stream({
           model: "claude-sonnet-4-6",
-          max_tokens: 16384,
+          max_tokens: 3000,
           system: TASK_SYSTEM_PROMPT,
           messages: [
             {
