@@ -189,7 +189,7 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
 
 // ── Shared helper: recursively read all project files (up to 2 levels deep) ──
 
-async function readAllProjectFiles(
+export async function readAllProjectFiles(
   sandbox: Sandbox,
   extensionPattern = /\.(html|css|js|ts|tsx|jsx|json|md|txt)$/
 ): Promise<Record<string, string>> {

@@ -3,10 +3,9 @@ import {
   reconnectSandbox,
   writeFiles,
   runCommandStreaming,
-  readFile,
-  listFiles,
   getPreviewUrl,
 } from "@/lib/sandbox";
+import { readAllProjectFiles } from "@/lib/ralph";
 import { rateLimit, getRequestIP } from "@/lib/rate-limit";
 import { clampString } from "@/lib/sanitize";
 
@@ -44,18 +43,48 @@ function parseResponse(text: string): EditAction | null {
   cleaned = cleaned.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
 
   const files: { path: string; content: string }[] = [];
-  const fileRegex = /\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([A-Za-z0-9+/=\s]+?)"\s*\}/g;
-  let match;
-  while ((match = fileRegex.exec(cleaned)) !== null) {
-    const path = match[1];
-    const b64Content = match[2].replace(/\s/g, "");
-    try {
-      const decoded = Buffer.from(b64Content, "base64").toString("utf-8");
-      if (decoded.length > 0) {
-        files.push({ path, content: decoded });
+
+  // Strategy 1: Try JSON.parse first (handles both base64 and plain text)
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (parsed.files && Array.isArray(parsed.files)) {
+      for (const f of parsed.files) {
+        if (!f.path || !f.content) continue;
+        const isBase64 = /^[A-Za-z0-9+/=\s]+$/.test(f.content) && f.content.length > 20;
+        if (isBase64) {
+          try {
+            const decoded = Buffer.from(f.content.replace(/\s/g, ""), "base64").toString("utf-8");
+            const printableRatio = decoded.replace(/[^\x20-\x7E\n\r\t]/g, "").length / decoded.length;
+            if (decoded.length > 0 && printableRatio > 0.9) {
+              files.push({ path: f.path, content: decoded });
+              continue;
+            }
+          } catch { /* fall through to plain text */ }
+        }
+        if (typeof f.content === "string" && f.content.length > 0) {
+          files.push({ path: f.path, content: f.content });
+        }
       }
-    } catch {
-      // skip files that fail to decode
+    }
+  } catch {
+    // JSON.parse failed — fall back to regex
+  }
+
+  // Strategy 2: Regex fallback for base64 content
+  if (files.length === 0) {
+    const fileRegex = /\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([A-Za-z0-9+/=\s]+?)"\s*\}/g;
+    let match;
+    while ((match = fileRegex.exec(cleaned)) !== null) {
+      const path = match[1];
+      const b64Content = match[2].replace(/\s/g, "");
+      try {
+        const decoded = Buffer.from(b64Content, "base64").toString("utf-8");
+        if (decoded.length > 0) {
+          files.push({ path, content: decoded });
+        }
+      } catch {
+        // skip files that fail to decode
+      }
     }
   }
 
@@ -158,7 +187,7 @@ export async function POST(request: Request) {
 
         send("agent_log", { log: "Reading current project files..." });
 
-        // Read key project files for context
+        // Read key project files for context (including subdirectories)
         let fileContext = "";
         if (context && context.length > 0) {
           fileContext = context
@@ -167,26 +196,11 @@ export async function POST(request: Request) {
             .join("\n\n");
         } else {
           try {
-            const projectFiles = await listFiles(
-              sandbox,
-              "/home/user/project"
-            );
-            const readableFiles = projectFiles.filter((f) =>
-              /\.(html|css|js|ts|tsx|jsx|json|md)$/.test(f)
-            );
-            const contents = [];
-            for (const fname of readableFiles.slice(0, 10)) {
-              try {
-                const content = await readFile(
-                  sandbox,
-                  `/home/user/project/${fname}`
-                );
-                contents.push(`--- ${fname} ---\n${content}`);
-              } catch {
-                // skip unreadable files
-              }
-            }
-            fileContext = contents.join("\n\n");
+            const fileContents = await readAllProjectFiles(sandbox);
+            fileContext = Object.entries(fileContents)
+              .slice(0, 15)
+              .map(([path, content]) => `--- ${path} ---\n${content}`)
+              .join("\n\n");
           } catch {
             fileContext = "(Could not read project files)";
           }
