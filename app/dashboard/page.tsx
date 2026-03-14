@@ -5,25 +5,53 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 
+interface Project {
+  id: string;
+  title: string | null;
+  description: string | null;
+  status: string | null;
+  created_at: string | null;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    async function load() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
       if (!user) {
         router.replace("/auth");
-      } else {
-        setUser(user);
-        setLoading(false);
+        return;
       }
-    });
+
+      setUser(user);
+
+      const { data } = await supabase
+        .from("projects")
+        .select("id, title, description, status, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+
+      setProjects(data || []);
+      setLoading(false);
+    }
+    load();
   }, [router]);
 
   async function handleSignOut() {
     await supabase.auth.signOut();
     router.replace("/auth");
+  }
+
+  async function handleDelete(projectId: string) {
+    await supabase.from("projects").delete().eq("id", projectId);
+    setProjects((prev) => prev.filter((p) => p.id !== projectId));
   }
 
   if (loading) {
@@ -35,31 +63,91 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen px-6">
-      <div className="w-full max-w-md text-center">
-        {/* Logo */}
-        <p className="text-accent font-mono text-sm tracking-widest uppercase mb-2">
-          Clancy
-        </p>
-        <h1 className="font-syne font-800 text-3xl mb-2">Dashboard</h1>
-        <p className="text-slate-400 mb-10">
-          Welcome,{" "}
-          <span className="text-slate-200">{user?.email}</span>
-        </p>
+    <div className="min-h-screen px-6 py-12">
+      <div className="max-w-3xl mx-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-10">
+          <div>
+            <p className="text-accent font-mono text-sm tracking-widest uppercase mb-1">
+              Clancy
+            </p>
+            <h1 className="font-syne font-800 text-3xl">Dashboard</h1>
+            <p className="text-slate-500 text-sm mt-1">
+              {user?.email}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <a
+              href="/"
+              className="bg-accent text-bg font-syne font-700 text-sm px-5 py-2.5 rounded-xl hover:brightness-110 transition-all"
+            >
+              New Project
+            </a>
+            <button
+              onClick={handleSignOut}
+              className="border border-slate-700 text-slate-400 font-syne font-600 text-sm px-5 py-2.5 rounded-xl hover:border-slate-500 hover:text-slate-200 transition-all"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
 
-        <a
-          href="/"
-          className="block w-full bg-accent text-bg font-syne font-700 text-lg py-4 rounded-xl hover:brightness-110 transition-all mb-4 text-center"
-        >
-          Start New Project
-        </a>
+        {/* Projects */}
+        <h2 className="font-syne font-700 text-xl mb-4">Your Projects</h2>
 
-        <button
-          onClick={handleSignOut}
-          className="w-full border border-slate-700 text-slate-400 font-syne font-600 py-3 rounded-xl hover:border-slate-500 hover:text-slate-200 transition-all"
-        >
-          Sign Out
-        </button>
+        {projects.length === 0 ? (
+          <div className="bg-surface rounded-xl p-8 text-center">
+            <p className="text-slate-500 mb-4">No projects yet.</p>
+            <a
+              href="/"
+              className="text-accent hover:underline font-mono text-sm"
+            >
+              Build your first project &rarr;
+            </a>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {projects.map((project) => (
+              <div
+                key={project.id}
+                className="bg-surface rounded-xl p-5 flex items-start gap-4"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-slate-200 font-syne font-700 truncate">
+                    {project.title || "Untitled"}
+                  </p>
+                  {project.description && (
+                    <p className="text-slate-500 text-sm mt-1 line-clamp-2">
+                      {project.description}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-3 mt-2">
+                    <span
+                      className={`text-xs font-mono px-2 py-0.5 rounded-full ${
+                        project.status === "complete"
+                          ? "bg-accent/10 text-accent"
+                          : "bg-slate-800 text-slate-500"
+                      }`}
+                    >
+                      {project.status || "pending"}
+                    </span>
+                    {project.created_at && (
+                      <span className="text-slate-600 text-xs font-mono">
+                        {new Date(project.created_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDelete(project.id)}
+                  className="text-slate-600 hover:text-red-400 transition-colors text-xs font-mono flex-shrink-0"
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

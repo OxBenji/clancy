@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
 const SYSTEM_PROMPT = `You are an autonomous software agent. You are executing one task from a larger project. Describe exactly what you are doing step by step as you work. Be specific and technical. Output 3-5 short action lines.`;
 
@@ -34,10 +34,15 @@ export async function POST(request: Request) {
   }
 
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    return new Response(JSON.stringify({ error: "tasks array is required and must not be empty" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        error: "tasks array is required and must not be empty",
+      }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   }
 
   const sorted = [...tasks].sort((a, b) => a.order_index - b.order_index);
@@ -49,6 +54,19 @@ export async function POST(request: Request) {
         controller.enqueue(encoder.encode(sseEvent(event, data)));
       };
 
+      const db = getSupabaseAdmin();
+
+      // Insert tasks into Supabase before starting
+      const taskRows = sorted.map((t) => ({
+        id: t.id,
+        project_id,
+        label: t.label,
+        order_index: t.order_index,
+        status: "pending",
+      }));
+
+      await db.from("tasks").insert(taskRows);
+
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
       for (const task of sorted) {
@@ -56,8 +74,8 @@ export async function POST(request: Request) {
 
         send("task_start", { task_id: task.id, label: task.label });
 
-        // Mark task as active in Supabase
-        await supabase
+        // Mark task as active
+        await db
           .from("tasks")
           .update({ status: "active" })
           .eq("id", task.id);
@@ -89,8 +107,8 @@ export async function POST(request: Request) {
 
           const duration = Math.round((Date.now() - startTime) / 1000);
 
-          // Mark task as done in Supabase
-          await supabase
+          // Mark task as done
+          await db
             .from("tasks")
             .update({ status: "done", duration_seconds: duration })
             .eq("id", task.id);
@@ -100,8 +118,8 @@ export async function POST(request: Request) {
           const message =
             err instanceof Error ? err.message : "Unknown error";
 
-          // Mark task as failed in Supabase
-          await supabase
+          // Mark task as failed
+          await db
             .from("tasks")
             .update({ status: "error" })
             .eq("id", task.id);
@@ -111,7 +129,7 @@ export async function POST(request: Request) {
       }
 
       // Update project status
-      await supabase
+      await db
         .from("projects")
         .update({ status: "complete" })
         .eq("id", project_id);
