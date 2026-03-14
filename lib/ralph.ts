@@ -313,61 +313,30 @@ export async function runRalphLoop(
           }
         }
 
-        // ── Execute action: run commands ──
+        // ── Execute action: run commands (no line-by-line streaming to keep log clean) ──
         if (action.commands && Array.isArray(action.commands)) {
           for (const cmd of action.commands.slice(0, 5)) {
+            // Show short version of command (truncate long heredocs/echo)
+            const shortCmd = cmd.length > 80 ? cmd.slice(0, 77) + "..." : cmd;
             emit({
               event: "agent_log",
-              data: { task_id: task.id, log: `$ ${stripHtml(cmd)}` },
+              data: { task_id: task.id, log: `$ ${stripHtml(shortCmd)}` },
             });
             try {
-              let stdoutBuf = "";
-              let stderrBuf = "";
               const result = await runCommandStreaming(sandbox, cmd, {
                 timeoutMs: 120_000,
-                onStdout: (chunk) => {
-                  stdoutBuf += chunk;
-                  const lines = stdoutBuf.split("\n");
-                  stdoutBuf = lines.pop() || "";
-                  for (const line of lines) {
-                    if (line.trim()) {
-                      emit({
-                        event: "agent_log",
-                        data: { task_id: task.id, log: stripHtml(line.trim()) },
-                      });
-                    }
-                  }
-                },
-                onStderr: (chunk) => {
-                  stderrBuf += chunk;
-                  const lines = stderrBuf.split("\n");
-                  stderrBuf = lines.pop() || "";
-                  for (const line of lines) {
-                    if (line.trim()) {
-                      emit({
-                        event: "agent_log",
-                        data: { task_id: task.id, log: `stderr: ${stripHtml(line.trim())}` },
-                      });
-                    }
-                  }
-                },
               });
-              if (stdoutBuf.trim()) {
-                emit({
-                  event: "agent_log",
-                  data: { task_id: task.id, log: stripHtml(stdoutBuf.trim()) },
-                });
-              }
-              if (stderrBuf.trim()) {
-                emit({
-                  event: "agent_log",
-                  data: { task_id: task.id, log: `stderr: ${stripHtml(stderrBuf.trim())}` },
-                });
-              }
               if (result.exitCode !== 0) {
+                // Only show last 3 lines of stderr on failure
+                const errLines = result.stderr.trim().split("\n").slice(-3).join("\n");
                 emit({
                   event: "agent_log",
-                  data: { task_id: task.id, log: `Exit code: ${result.exitCode}` },
+                  data: { task_id: task.id, log: `Exit ${result.exitCode}: ${stripHtml(errLines || "command failed")}` },
+                });
+              } else {
+                emit({
+                  event: "agent_log",
+                  data: { task_id: task.id, log: "Done" },
                 });
               }
             } catch (cmdErr) {
