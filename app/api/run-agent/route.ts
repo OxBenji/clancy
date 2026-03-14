@@ -126,15 +126,29 @@ export async function POST(request: Request) {
         let previewUrl: string | null = null;
 
         try {
-          // Use E2B's background option — shell & doesn't work reliably
+          // Use nohup + shell & to keep server alive after API response ends.
+          // We run it in a non-blocking way and then poll to confirm it's listening.
           await runCommandStreaming(
             sandbox,
-            "cd /home/user/project && python3 -m http.server 3000",
-            { timeoutMs: 10_000, background: true }
+            "cd /home/user/project && nohup python3 -m http.server 3000 > /tmp/preview.log 2>&1 &",
+            { timeoutMs: 5_000 }
           );
 
-          // Give server a moment to bind
-          await new Promise((r) => setTimeout(r, 3000));
+          // Poll until port 3000 is listening (up to 5 seconds)
+          for (let i = 0; i < 5; i++) {
+            await new Promise((r) => setTimeout(r, 1000));
+            try {
+              const probe = await runCommandStreaming(
+                sandbox,
+                `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/`,
+                { timeoutMs: 3_000 }
+              );
+              if (probe.stdout.trim() === "200") break;
+            } catch {
+              // keep trying
+            }
+          }
+
           previewUrl = getPreviewUrl(sandbox, 3000);
         } catch {
           // Even if the server command "fails", still try the URL
@@ -195,10 +209,10 @@ export async function POST(request: Request) {
               await runCommandStreaming(sandbox, "pkill -f 'python3 -m http.server' || true", { timeoutMs: 5_000 });
               await runCommandStreaming(
                 sandbox,
-                "cd /home/user/project && python3 -m http.server 3000",
-                { timeoutMs: 10_000, background: true }
+                "cd /home/user/project && nohup python3 -m http.server 3000 > /tmp/preview.log 2>&1 &",
+                { timeoutMs: 5_000 }
               );
-              await new Promise((r) => setTimeout(r, 3000));
+              await new Promise((r) => setTimeout(r, 2000));
             } catch {
               // best effort
             }
