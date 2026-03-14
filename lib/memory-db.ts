@@ -89,6 +89,21 @@ class QueryBuilder {
     return this;
   }
 
+  order(column: string, options?: { ascending?: boolean }) {
+    const matching = tables[this.table].filter((row) =>
+      this.filters.every((f) => row[f.column] === f.value)
+    );
+    const asc = options?.ascending ?? true;
+    matching.sort((a, b) => {
+      const va = a[column] as string | number;
+      const vb = b[column] as string | number;
+      if (va < vb) return asc ? -1 : 1;
+      if (va > vb) return asc ? 1 : -1;
+      return 0;
+    });
+    return { data: matching, error: null };
+  }
+
   // Terminal method for selects without filters
   then(resolve: (result: { data: Row[]; error: null }) => void) {
     const matching = tables[this.table].filter((row) =>
