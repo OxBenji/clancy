@@ -187,10 +187,17 @@ export default function Building({
   );
 
   useEffect(() => {
-    if (logEndRef.current) {
+    if (!complete && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [logs]);
+  }, [logs, complete]);
+
+  // Scroll to top when build completes so user sees the success banner
+  useEffect(() => {
+    if (complete) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [complete]);
 
   useEffect(() => {
     if (started.current) return;
