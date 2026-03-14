@@ -331,32 +331,41 @@ export async function POST(request: Request) {
           const hasPkg = checkPkg.stdout.includes('"scripts"');
 
           if (hasPkg) {
+            send("agent_log", {
+              task_id: "system",
+              log: "Detected package.json with scripts, starting dev server...",
+            });
             await runCommandStreaming(
               sandbox,
-              "cd /home/user/project && npm run dev -- --port 3000 &>/dev/null &",
-              { background: true, timeoutMs: 10_000 }
+              "cd /home/user/project && nohup npm run dev -- --port 3000 > /tmp/server.log 2>&1 &",
+              { timeoutMs: 10_000 }
             ).catch(() =>
               runCommandStreaming(
                 sandbox,
-                "cd /home/user/project && npm start &>/dev/null &",
-                { background: true, timeoutMs: 10_000 }
+                "cd /home/user/project && nohup npm start > /tmp/server.log 2>&1 &",
+                { timeoutMs: 10_000 }
               )
             );
           } else {
+            send("agent_log", {
+              task_id: "system",
+              log: "Starting static file server...",
+            });
             await runCommandStreaming(
               sandbox,
-              "cd /home/user/project && npx -y serve -l 3000 &>/dev/null &",
-              { background: true, timeoutMs: 30_000 }
+              "cd /home/user/project && nohup npx -y serve -l 3000 > /tmp/server.log 2>&1 &",
+              { timeoutMs: 30_000 }
             ).catch(() =>
               runCommandStreaming(
                 sandbox,
-                "cd /home/user/project && python3 -m http.server 3000 &",
-                { background: true, timeoutMs: 10_000 }
+                "cd /home/user/project && nohup python3 -m http.server 3000 > /tmp/server.log 2>&1 &",
+                { timeoutMs: 10_000 }
               )
             );
           }
 
-          await new Promise((r) => setTimeout(r, 2000));
+          // Wait for server to start
+          await new Promise((r) => setTimeout(r, 3000));
 
           const previewUrl = getPreviewUrl(sandbox, 3000);
           send("preview_url", { url: previewUrl });
@@ -364,10 +373,14 @@ export async function POST(request: Request) {
             task_id: "system",
             log: `Preview available at ${previewUrl}`,
           });
-        } catch {
+        } catch (previewErr) {
+          const msg =
+            previewErr instanceof Error
+              ? previewErr.message
+              : "Unknown error";
           send("agent_log", {
             task_id: "system",
-            log: "Could not start preview server — project files were created successfully.",
+            log: `Could not start preview server: ${msg}. Project files were created successfully.`,
           });
         }
 
