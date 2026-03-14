@@ -30,20 +30,30 @@ interface EditAction {
 
 function parseResponse(text: string): EditAction | null {
   let jsonText = text.trim();
-  if (jsonText.startsWith("```")) {
-    jsonText = jsonText
-      .replace(/^```(?:json)?\s*\n?/, "")
-      .replace(/\n?\s*```$/, "");
-  }
+  // Strip code fences
+  jsonText = jsonText.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
+
   try {
     return JSON.parse(jsonText);
   } catch {
-    const match = jsonText.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        return JSON.parse(match[0]);
-      } catch {
-        return null;
+    // Extract first balanced JSON object
+    const start = jsonText.indexOf("{");
+    if (start === -1) return null;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < jsonText.length; i++) {
+      const ch = jsonText[i];
+      if (esc) { esc = false; continue; }
+      if (ch === "\\") { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          try { return JSON.parse(jsonText.slice(start, i + 1)); } catch { return null; }
+        }
       }
     }
     return null;
