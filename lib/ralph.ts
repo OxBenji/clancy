@@ -306,6 +306,15 @@ export async function runRalphLoop(
   emit: (event: RalphEvent) => void
 ): Promise<{ totalCostUsd: number; totalIterations: number }> {
   const db = getSupabaseAdmin();
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    emit({
+      event: "agent_log",
+      data: { task_id: "system", log: "Error: ANTHROPIC_API_KEY is not set" },
+    });
+    return { totalCostUsd: 0, totalIterations: 0 };
+  }
+
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   let totalCostUsd = 0;
@@ -394,10 +403,22 @@ export async function runRalphLoop(
 
       try {
         // ── Read guardrails for this project ──
-        const { data: guardrails } = await db
+        emit({
+          event: "agent_log",
+          data: { task_id: task.id, log: "Loading context..." },
+        });
+
+        const { data: guardrails, error: guardrailsError } = await db
           .from("guardrails")
           .select("task_label, sign")
           .eq("project_id", projectId);
+
+        if (guardrailsError) {
+          emit({
+            event: "agent_log",
+            data: { task_id: task.id, log: `Guardrails query error: ${guardrailsError.message} — continuing without guardrails` },
+          });
+        }
 
         const guardrailsText =
           guardrails && guardrails.length > 0
@@ -432,7 +453,7 @@ export async function runRalphLoop(
 
         let response;
         try {
-          response = await anthropic.messages.create({
+          const apiPromise = anthropic.messages.create({
             model: "claude-sonnet-4-6",
             max_tokens: 16384,
             system: TASK_SYSTEM_PROMPT,
@@ -443,6 +464,13 @@ export async function runRalphLoop(
               },
             ],
           });
+
+          // 90-second timeout on the API call
+          const timeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Claude API call timed out after 90s")), 90_000)
+          );
+
+          response = await Promise.race([apiPromise, timeout]);
         } finally {
           clearInterval(heartbeat);
         }
