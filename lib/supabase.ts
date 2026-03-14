@@ -1,7 +1,20 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+let _client: SupabaseClient<Database> | null = null;
 
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+export function getSupabase(): SupabaseClient<Database> {
+  if (!_client) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    _client = createClient<Database>(url, key);
+  }
+  return _client;
+}
+
+// Keep the named export for backward compatibility
+export const supabase = new Proxy({} as SupabaseClient<Database>, {
+  get(_target, prop) {
+    return Reflect.get(getSupabase(), prop);
+  },
+});
