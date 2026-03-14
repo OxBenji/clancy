@@ -154,6 +154,44 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
   return { action, complete, failReason };
 }
 
+// ── Shared helper: recursively read all project files (up to 2 levels deep) ──
+
+async function readAllProjectFiles(
+  sandbox: Sandbox,
+  extensionPattern = /\.(html|css|js|ts|tsx|jsx|json|md|txt)$/
+): Promise<Record<string, string>> {
+  const fileContents: Record<string, string> = {};
+
+  let topLevel: string[] = [];
+  try {
+    topLevel = await listFiles(sandbox, "/home/user/project");
+  } catch {
+    return fileContents;
+  }
+
+  for (const fname of topLevel) {
+    if (extensionPattern.test(fname)) {
+      try {
+        fileContents[fname] = await readFile(sandbox, `/home/user/project/${fname}`);
+      } catch { /* skip */ }
+    } else if (!fname.includes(".")) {
+      // Likely a directory — read one level deeper
+      try {
+        const subFiles = await listFiles(sandbox, `/home/user/project/${fname}`);
+        for (const sf of subFiles) {
+          if (extensionPattern.test(sf)) {
+            try {
+              fileContents[`${fname}/${sf}`] = await readFile(sandbox, `/home/user/project/${fname}/${sf}`);
+            } catch { /* skip */ }
+          }
+        }
+      } catch { /* not a directory */ }
+    }
+  }
+
+  return fileContents;
+}
+
 // ── Success criteria verification ──
 
 async function verifyCriteria(
@@ -164,47 +202,20 @@ async function verifyCriteria(
 ): Promise<{ passed: boolean; failures: string[] }> {
   const failures: string[] = [];
 
-  // Read all project files for checking
-  let projectFiles: string[] = [];
-  try {
-    projectFiles = await listFiles(sandbox, "/home/user/project");
-  } catch {
+  const fileContents = await readAllProjectFiles(sandbox);
+  if (Object.keys(fileContents).length === 0) {
     return { passed: false, failures: ["Could not read project files"] };
   }
 
-  // Read contents of all readable files
-  const fileContents: Record<string, string> = {};
-  for (const fname of projectFiles) {
-    if (/\.(html|css|js|ts|tsx|jsx|json|md|txt)$/.test(fname)) {
-      try {
-        const content = await readFile(sandbox, `/home/user/project/${fname}`);
-        fileContents[fname] = content;
-      } catch {
-        // skip unreadable
-      }
-    }
-  }
-
-  // Also try reading from subdirectories (one level deep)
-  for (const fname of projectFiles) {
-    if (!fname.includes(".")) {
-      try {
-        const subFiles = await listFiles(sandbox, `/home/user/project/${fname}`);
-        for (const sf of subFiles) {
-          if (/\.(html|css|js|ts|tsx|jsx|json|md|txt)$/.test(sf)) {
-            try {
-              const content = await readFile(sandbox, `/home/user/project/${fname}/${sf}`);
-              fileContents[`${fname}/${sf}`] = content;
-            } catch {
-              // skip
-            }
-          }
-        }
-      } catch {
-        // not a directory
-      }
-    }
-  }
+  // Helper: find file content by exact name or basename match (e.g. "styles.css" matches "css/styles.css")
+  const findFile = (name: string): string | undefined => {
+    if (fileContents[name]) return fileContents[name];
+    // Try basename match
+    const byBasename = Object.entries(fileContents).find(
+      ([path]) => path.endsWith(`/${name}`) || path === name
+    );
+    return byBasename?.[1];
+  };
 
   for (const criterion of criteria) {
     // Parse criterion: "filename contains pattern"
@@ -212,7 +223,7 @@ async function verifyCriteria(
     if (containsMatch) {
       const targetFile = containsMatch[1];
       const pattern = containsMatch[2].trim();
-      const content = fileContents[targetFile];
+      const content = findFile(targetFile);
       if (!content) {
         failures.push(`${targetFile} not found`);
         emit({ event: "agent_log", data: { task_id: taskId, log: `[VERIFY] FAIL: ${targetFile} not found` } });
@@ -572,18 +583,8 @@ export async function runRalphLoop(
               data: { task_id: task.id, log: "Running reviewer agent..." },
             });
 
-            // Read current files for review
-            let projectFiles: string[] = [];
-            try { projectFiles = await listFiles(sandbox, "/home/user/project"); } catch { /* */ }
-
-            const reviewContents: Record<string, string> = {};
-            for (const fname of projectFiles) {
-              if (/\.(html|css|js|ts|json)$/.test(fname)) {
-                try {
-                  reviewContents[fname] = await readFile(sandbox, `/home/user/project/${fname}`);
-                } catch { /* skip */ }
-              }
-            }
+            // Read current files for review (including subdirectories)
+            const reviewContents = await readAllProjectFiles(sandbox);
 
             try {
               const review = await runReview(anthropic, task.label, task.success_criteria!, reviewContents);
