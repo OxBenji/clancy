@@ -17,7 +17,6 @@ const HAIKU_OUTPUT_COST = 4; // $4 per 1M output tokens (haiku)
 const BUDGET_LIMIT_USD = parseFloat(process.env.BUDGET_LIMIT_USD || "2.00");
 const MAX_ITERATIONS = parseInt(process.env.MAX_ITERATIONS || "10", 10);
 const MAX_RETRIES_PER_TASK = 3;
-const MAX_REVIEW_CYCLES = 3;
 
 // ── Types ──
 
