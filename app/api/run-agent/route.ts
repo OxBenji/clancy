@@ -9,9 +9,9 @@ import { rateLimit, getRequestIP } from "@/lib/rate-limit";
 import { validateDescription, clampString } from "@/lib/sanitize";
 import type { RalphTask } from "@/lib/ralph";
 
-// Force dynamic rendering + allow up to 5 minutes for the full build loop
+// Force dynamic rendering + allow up to 10 minutes for the full build loop
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 interface TaskInput {
   id: string;

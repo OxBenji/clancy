@@ -199,12 +199,12 @@ async function verifyCriteria(
   criteria: string[],
   emit: (event: RalphEvent) => void,
   taskId: string
-): Promise<{ passed: boolean; failures: string[] }> {
+): Promise<{ passed: boolean; failures: string[]; fileContents: Record<string, string> }> {
   const failures: string[] = [];
 
   const fileContents = await readAllProjectFiles(sandbox);
   if (Object.keys(fileContents).length === 0) {
-    return { passed: false, failures: ["Could not read project files"] };
+    return { passed: false, failures: ["Could not read project files"], fileContents };
   }
 
   // Helper: find file content by exact name or basename match (e.g. "styles.css" matches "css/styles.css")
@@ -314,7 +314,7 @@ async function verifyCriteria(
     }
   }
 
-  return { passed: failures.length === 0, failures };
+  return { passed: failures.length === 0, failures, fileContents };
 }
 
 // ── Haiku reviewer agent ──
@@ -684,7 +684,7 @@ export async function runRalphLoop(
             data: { task_id: task.id, log: "Verifying success criteria..." },
           });
 
-          const { passed, failures } = await verifyCriteria(
+          const { passed, failures, fileContents: verifyContents } = await verifyCriteria(
             sandbox,
             task.success_criteria!,
             emit,
@@ -698,11 +698,9 @@ export async function runRalphLoop(
               data: { task_id: task.id, log: "Running reviewer agent..." },
             });
 
-            // Read current files for review (including subdirectories)
-            const reviewContents = await readAllProjectFiles(sandbox);
-
+            // Reuse file contents from verification (avoids redundant sandbox reads)
             try {
-              const review = await runReview(anthropic, task.label, task.success_criteria!, reviewContents);
+              const review = await runReview(anthropic, task.label, task.success_criteria!, verifyContents);
               totalCostUsd += review.cost;
 
               if (review.passed) {
