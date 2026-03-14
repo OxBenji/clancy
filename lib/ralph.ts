@@ -401,34 +401,24 @@ export async function runRalphLoop(
   }));
   await db.from("tasks").insert(taskRows);
 
-  for (let taskIdx = 0; taskIdx < sorted.length; taskIdx++) {
-    const task = sorted[taskIdx];
+  // Shared mutable state for parallel task execution
+  const sharedState = {
+    totalCostUsd,
+    totalIterations,
+  };
+
+  // ── Execute a single task (with retries) ──
+  async function executeTask(
+    task: RalphTask,
+    taskIdx: number,
+    totalTasks: number
+  ): Promise<{ complete: boolean; costAdded: number; iterationsUsed: number; summary?: string }> {
     const startTime = Date.now();
-
-    // ── Budget check ──
-    if (totalCostUsd >= BUDGET_LIMIT_USD) {
-      emit({
-        event: "budget_exceeded",
-        data: { cost_usd: totalCostUsd, limit_usd: BUDGET_LIMIT_USD },
-      });
-      await db
-        .from("projects")
-        .update({ status: "budget_exceeded" })
-        .eq("id", projectId);
-      break;
-    }
-
-    // ── Max iterations check ──
-    if (totalIterations >= MAX_ITERATIONS) {
-      emit({
-        event: "agent_log",
-        data: {
-          task_id: "system",
-          log: `Hard stop: reached ${MAX_ITERATIONS} total iterations.`,
-        },
-      });
-      break;
-    }
+    const hasCriteria = task.success_criteria && task.success_criteria.length > 0;
+    let taskComplete = false;
+    let costAdded = 0;
+    let iterationsUsed = 0;
+    let taskSummary: string | undefined;
 
     emit({
       event: "task_start",
@@ -436,7 +426,7 @@ export async function runRalphLoop(
         task_id: task.id,
         label: task.label,
         task_index: taskIdx + 1,
-        total_tasks: sorted.length,
+        total_tasks: totalTasks,
       },
     });
 
@@ -445,27 +435,23 @@ export async function runRalphLoop(
       .update({ status: "active" })
       .eq("id", task.id);
 
-    const hasCriteria = task.success_criteria && task.success_criteria.length > 0;
-
-    // ── Retry loop (max 3 attempts) ──
-    let taskComplete = false;
-
     for (let attempt = 1; attempt <= MAX_RETRIES_PER_TASK; attempt++) {
-      if (totalIterations >= MAX_ITERATIONS) break;
-      if (totalCostUsd >= BUDGET_LIMIT_USD) break;
+      if (sharedState.totalIterations >= MAX_ITERATIONS) break;
+      if (sharedState.totalCostUsd >= BUDGET_LIMIT_USD) break;
 
-      totalIterations++;
+      sharedState.totalIterations++;
+      iterationsUsed++;
 
       emit({
         event: "agent_log",
         data: {
           task_id: task.id,
-          log: `Task ${taskIdx + 1}/${sorted.length} · Attempt ${attempt}/${MAX_RETRIES_PER_TASK}`,
+          log: `Task ${taskIdx + 1}/${totalTasks} · Attempt ${attempt}/${MAX_RETRIES_PER_TASK}`,
           task_index: taskIdx + 1,
-          total_tasks: sorted.length,
+          total_tasks: totalTasks,
           attempt,
           max_attempts: MAX_RETRIES_PER_TASK,
-          iteration: totalIterations,
+          iteration: sharedState.totalIterations,
           max_iterations: MAX_ITERATIONS,
         },
       });
@@ -548,12 +534,13 @@ export async function runRalphLoop(
         const inputTokens = response.usage?.input_tokens ?? 0;
         const outputTokens = response.usage?.output_tokens ?? 0;
         const callCost = calculateCost(inputTokens, outputTokens);
-        totalCostUsd += callCost;
+        costAdded += callCost;
+        sharedState.totalCostUsd += callCost;
 
         emit({
           event: "cost_update",
           data: {
-            cost_usd: totalCostUsd,
+            cost_usd: sharedState.totalCostUsd,
             limit_usd: BUDGET_LIMIT_USD,
             call_tokens: { input: inputTokens, output: outputTokens },
           },
@@ -672,9 +659,7 @@ export async function runRalphLoop(
             event: "agent_log",
             data: { task_id: task.id, log: stripHtml(action.summary) },
           });
-          completedActions.push(
-            `- Task ${task.order_index}: ${action.summary}`
-          );
+          taskSummary = action.summary;
         }
 
         // ── VERIFICATION: check success criteria against actual files ──
@@ -701,7 +686,8 @@ export async function runRalphLoop(
             // Reuse file contents from verification (avoids redundant sandbox reads)
             try {
               const review = await runReview(anthropic, task.label, task.success_criteria!, verifyContents);
-              totalCostUsd += review.cost;
+              costAdded += review.cost;
+              sharedState.totalCostUsd += review.cost;
 
               if (review.passed) {
                 emit({
@@ -786,7 +772,83 @@ export async function runRalphLoop(
         data: { task_id: task.id, error: `Failed after ${MAX_RETRIES_PER_TASK} attempts` },
       });
     }
+
+    return { complete: taskComplete, costAdded, iterationsUsed, summary: taskSummary };
   }
+
+  // ── Group tasks by order_index for parallel execution ──
+  const groups: Map<number, { task: RalphTask; globalIdx: number }[]> = new Map();
+  for (let i = 0; i < sorted.length; i++) {
+    const orderIdx = sorted[i].order_index;
+    if (!groups.has(orderIdx)) groups.set(orderIdx, []);
+    groups.get(orderIdx)!.push({ task: sorted[i], globalIdx: i });
+  }
+
+  const sortedGroupKeys = Array.from(groups.keys()).sort((a, b) => a - b);
+
+  for (const groupKey of sortedGroupKeys) {
+    // ── Budget + iteration checks before each group ──
+    if (sharedState.totalCostUsd >= BUDGET_LIMIT_USD) {
+      emit({
+        event: "budget_exceeded",
+        data: { cost_usd: sharedState.totalCostUsd, limit_usd: BUDGET_LIMIT_USD },
+      });
+      await db
+        .from("projects")
+        .update({ status: "budget_exceeded" })
+        .eq("id", projectId);
+      break;
+    }
+
+    if (sharedState.totalIterations >= MAX_ITERATIONS) {
+      emit({
+        event: "agent_log",
+        data: {
+          task_id: "system",
+          log: `Hard stop: reached ${MAX_ITERATIONS} total iterations.`,
+        },
+      });
+      break;
+    }
+
+    const group = groups.get(groupKey)!;
+
+    if (group.length === 1) {
+      // Single task — run sequentially (no overhead)
+      const { task, globalIdx } = group[0];
+      const result = await executeTask(task, globalIdx, sorted.length);
+      if (result.summary) {
+        completedActions.push(`- Task ${task.order_index}: ${result.summary}`);
+      }
+    } else {
+      // Multiple tasks at same order_index — run in parallel
+      emit({
+        event: "agent_log",
+        data: {
+          task_id: "system",
+          log: `Running ${group.length} tasks in parallel (order_index ${groupKey})`,
+        },
+      });
+
+      const results = await Promise.all(
+        group.map(({ task, globalIdx }) =>
+          executeTask(task, globalIdx, sorted.length)
+        )
+      );
+
+      // Collect summaries from all parallel tasks
+      for (let i = 0; i < results.length; i++) {
+        if (results[i].summary) {
+          completedActions.push(
+            `- Task ${group[i].task.order_index}: ${results[i].summary}`
+          );
+        }
+      }
+    }
+  }
+
+  totalCostUsd = sharedState.totalCostUsd;
+  totalIterations = sharedState.totalIterations;
 
   // ── Update project cost in DB ──
   await db
