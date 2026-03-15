@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useUser, useClerk } from "@clerk/nextjs";
+import { useUser, useClerk } from "@/lib/clerk-hooks";
 import { supabase } from "@/lib/supabase";
 
 interface Project {

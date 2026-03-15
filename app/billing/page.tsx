@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useState, useEffect } from "react";
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/lib/clerk-hooks";
 import { useSearchParams } from "next/navigation";
 
 export default function BillingPage() {

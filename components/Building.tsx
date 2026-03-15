@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/lib/clerk-hooks";
 import JSZip from "jszip";
 import { supabase } from "@/lib/supabase";
 import EditChat from "@/components/EditChat";
