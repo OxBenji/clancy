@@ -148,15 +148,6 @@ function detectSections(
   const content = htmlFile.content;
   const sections: DetectedSection[] = [];
 
-  // Match semantic HTML sections: <section>, <header>, <footer>, <nav>, <main>, <aside>
-  // Also match divs with id or class containing section-like names
-  const patterns = [
-    // Semantic tags with id or class
-    /<(section|header|footer|nav|main|aside)\b[^>]*(?:id="([^"]*)")?[^>]*(?:class="([^"]*)")?[^>]*>/gi,
-    // Divs with meaningful ids
-    /<div\b[^>]*id="([^"]*)"[^>]*>/gi,
-  ];
-
   // Track seen to avoid duplicates
   const seen = new Set<string>();
   let counter = 0;
