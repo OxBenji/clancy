@@ -1,14 +1,16 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
 import Landing from "@/components/Landing";
 import TemplateGrid from "@/components/TemplateGrid";
-import Create from "@/components/Create";
-import Planning from "@/components/Planning";
-import Building from "@/components/Building";
-import CodingChat from "@/components/CodingChat";
-import ThemeMarketplace from "@/components/ThemeMarketplace";
 import type { PlanTask } from "@/lib/types";
+
+const Create = dynamic(() => import("@/components/Create"));
+const Planning = dynamic(() => import("@/components/Planning"));
+const Building = dynamic(() => import("@/components/Building"));
+const CodingChat = dynamic(() => import("@/components/CodingChat"));
+const ThemeMarketplace = dynamic(() => import("@/components/ThemeMarketplace"));
 type View = "landing" | "templates" | "create" | "planning" | "building" | "chat" | "themes";
 
 export default function Home() {

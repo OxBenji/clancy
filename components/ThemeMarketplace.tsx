@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { THEMES, type Theme } from "@/lib/themes";
+
+const ALL_TAGS = Array.from(new Set(THEMES.flatMap((t) => t.tags)));
 
 export default function ThemeMarketplace({
   onSelect,
@@ -11,18 +13,26 @@ export default function ThemeMarketplace({
   onBack: () => void;
 }) {
   const [filter, setFilter] = useState("");
+  const [debouncedFilter, setDebouncedFilter] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
-  const allTags = Array.from(new Set(THEMES.flatMap((t) => t.tags)));
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedFilter(filter), 200);
+    return () => clearTimeout(id);
+  }, [filter]);
 
-  const filtered = THEMES.filter((t) => {
-    const matchesSearch =
-      !filter ||
-      t.name.toLowerCase().includes(filter.toLowerCase()) ||
-      t.description.toLowerCase().includes(filter.toLowerCase());
-    const matchesTag = !selectedTag || t.tags.includes(selectedTag);
-    return matchesSearch && matchesTag;
-  });
+  const filtered = useMemo(
+    () =>
+      THEMES.filter((t) => {
+        const matchesSearch =
+          !debouncedFilter ||
+          t.name.toLowerCase().includes(debouncedFilter.toLowerCase()) ||
+          t.description.toLowerCase().includes(debouncedFilter.toLowerCase());
+        const matchesTag = !selectedTag || t.tags.includes(selectedTag);
+        return matchesSearch && matchesTag;
+      }),
+    [debouncedFilter, selectedTag]
+  );
 
   return (
     <div className="flex flex-col items-center min-h-screen px-6 py-12">
@@ -64,7 +74,7 @@ export default function ThemeMarketplace({
           >
             All
           </button>
-          {allTags.map((tag) => (
+          {ALL_TAGS.map((tag) => (
             <button
               key={tag}
               onClick={() =>

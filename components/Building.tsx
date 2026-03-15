@@ -11,9 +11,17 @@ import type { PlanTask, LogEntry, FileEntry } from "@/lib/types";
 
 type MobilePanel = "tasks" | "log" | "files" | "edit" | "export";
 
+const MAX_LOGS = 500;
+
 /** Strip HTML tags from log text to prevent XSS. */
 function sanitizeLog(text: string): string {
   return text.replace(/<[^>]*>/g, "");
+}
+
+/** Append a log entry, capping the array at MAX_LOGS. */
+function appendLog(prev: LogEntry[], entry: LogEntry): LogEntry[] {
+  const next = [...prev, entry];
+  return next.length > MAX_LOGS ? next.slice(next.length - MAX_LOGS) : next;
 }
 
 export default function Building({
@@ -128,21 +136,19 @@ export default function Building({
               t.id === data.task_id ? { ...t, status: "active" } : t
             )
           );
-          setLogs((prev) => [
-            ...prev,
-            {
+          setLogs((prev) =>
+            appendLog(prev, {
               task_id: data.task_id!,
               text: sanitizeLog(`--- Starting: ${data.label} ---`),
               ts: Date.now(),
-            },
-          ]);
+            })
+          );
           break;
 
         case "agent_log":
-          setLogs((prev) => [
-            ...prev,
-            { task_id: data.task_id!, text: sanitizeLog(data.log!), ts: Date.now() },
-          ]);
+          setLogs((prev) =>
+            appendLog(prev, { task_id: data.task_id!, text: sanitizeLog(data.log!), ts: Date.now() })
+          );
           break;
 
         case "task_complete":
@@ -153,14 +159,13 @@ export default function Building({
                 : t
             )
           );
-          setLogs((prev) => [
-            ...prev,
-            {
+          setLogs((prev) =>
+            appendLog(prev, {
               task_id: data.task_id!,
               text: `--- Completed in ${data.duration}s ---`,
               ts: Date.now(),
-            },
-          ]);
+            })
+          );
           break;
 
         case "task_error":
@@ -169,14 +174,13 @@ export default function Building({
               t.id === data.task_id ? { ...t, status: "error" } : t
             )
           );
-          setLogs((prev) => [
-            ...prev,
-            {
+          setLogs((prev) =>
+            appendLog(prev, {
               task_id: data.task_id!,
               text: sanitizeLog(`--- Error: ${data.error} ---`),
               ts: Date.now(),
-            },
-          ]);
+            })
+          );
           break;
 
         case "file_created":
@@ -202,24 +206,22 @@ export default function Building({
         case "budget_exceeded":
           setBudgetExceeded(true);
           setComplete(true);
-          setLogs((prev) => [
-            ...prev,
-            {
+          setLogs((prev) =>
+            appendLog(prev, {
               task_id: "system",
-              text: `--- Budget exceeded: $${(data.cost_usd ?? 0).toFixed(2)} / $${(data.limit_usd ?? 2).toFixed(2)} limit ---`,
+              text: `--- Budget exceeded: ${(data.cost_usd ?? 0).toFixed(2)} / ${(data.limit_usd ?? 2).toFixed(2)} usage ---`,
               ts: Date.now(),
-            },
-          ]);
+            })
+          );
           break;
 
         case "build_complete":
           setWaiting(false);
           if (waitingTimer.current) clearTimeout(waitingTimer.current);
           setComplete(true);
-          setLogs((prev) => [
-            ...prev,
-            { task_id: "system", text: sanitizeLog(data.message!), ts: Date.now() },
-          ]);
+          setLogs((prev) =>
+            appendLog(prev, { task_id: "system", text: sanitizeLog(data.message!), ts: Date.now() })
+          );
           break;
       }
     },
@@ -334,35 +336,32 @@ export default function Building({
             );
             if (allFinished) {
               setComplete(true);
-              setLogs((prev) => [
-                ...prev,
-                {
+              setLogs((prev) =>
+                appendLog(prev, {
                   task_id: "system",
                   text: "--- Connection lost but build finished. State recovered from database. ---",
                   ts: Date.now(),
-                },
-              ]);
+                })
+              );
             } else {
-              setLogs((prev) => [
-                ...prev,
-                {
+              setLogs((prev) =>
+                appendLog(prev, {
                   task_id: "system",
                   text: "--- Connection lost. Progress recovered from database. Build may still be running. ---",
                   ts: Date.now(),
-                },
-              ]);
+                })
+              );
             }
           }
         } catch {
           // DB recovery also failed — show generic error
-          setLogs((prev) => [
-            ...prev,
-            {
+          setLogs((prev) =>
+            appendLog(prev, {
               task_id: "system",
               text: "--- Connection lost. Could not recover state. ---",
               ts: Date.now(),
-            },
-          ]);
+            })
+          );
         }
       }
     }
@@ -409,7 +408,7 @@ export default function Building({
       {/* Success banner with preview URL */}
       {complete && (
         <div className={`${budgetExceeded ? "bg-red-500" : "bg-accent"} text-bg text-center py-3 font-syne font-700 text-sm sm:text-base flex flex-wrap items-center justify-center gap-4 px-4`}>
-          <span>{budgetExceeded ? "Budget limit reached" : "Your project is ready!"}</span>
+          <span>{budgetExceeded ? "Budget exceeded" : "Your project is ready!"}</span>
           {previewUrl && !sandboxExpired && (
             <a
               href={previewUrl}
@@ -526,7 +525,7 @@ export default function Building({
           </p>
           {costUsd > 0 && (
             <p className={`text-xs mb-4 font-mono ${budgetExceeded ? "text-red-400" : "text-slate-600"}`}>
-              ${costUsd.toFixed(2)} / ${costLimit.toFixed(2)} limit
+              {costUsd.toFixed(2)} / {costLimit.toFixed(2)} usage
             </p>
           )}
           <ol className="space-y-2">
