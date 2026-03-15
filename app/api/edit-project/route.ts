@@ -7,7 +7,7 @@ import {
 } from "@/lib/sandbox";
 import { readAllProjectFiles } from "@/lib/ralph";
 import { rateLimitTiered } from "@/lib/rate-limit";
-import { auth } from "@clerk/nextjs/server";
+import { safeAuth } from "@/lib/safe-auth";
 import { clampString } from "@/lib/sanitize";
 
 export const maxDuration = 120;
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { userId } = await auth();
+  const { userId } = await safeAuth();
   const rl = rateLimitTiered(request, "edit-project", { userId });
   if (!rl.allowed) {
     return new Response(JSON.stringify({ error: "Too many requests" }), {

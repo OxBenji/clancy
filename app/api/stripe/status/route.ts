@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { safeAuth } from "@/lib/safe-auth";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
 export async function GET() {
-  const { userId } = await auth();
+  const { userId } = await safeAuth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
