@@ -6,6 +6,10 @@ const isPublicRoute = createRouteMatcher([
   "/",
   "/auth(.*)",
   "/api/stripe/webhook",
+  "/api/generate-plan",
+  "/api/run-agent",
+  "/api/chat",
+  "/api/edit-project",
 ]);
 
 // Only enable Clerk middleware when keys are configured

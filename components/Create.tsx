@@ -38,7 +38,11 @@ export default function Create({
       try {
         data = await res.json();
       } catch {
-        throw new Error("Invalid response from server");
+        throw new Error(
+          res.status === 401 || res.status === 403
+            ? "Please sign in and try again."
+            : `Server error (${res.status}). Please try again.`
+        );
       }
 
       if (!res.ok) {
