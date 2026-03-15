@@ -204,12 +204,12 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
   let match;
   while ((match = fileRegex.exec(cleaned)) !== null) {
     const path = match[1];
-    // Unescape JSON string escapes
+    // Unescape JSON string escapes — \\\\ must be first to avoid corrupting \\n → \+newline
     const content = match[2]
+      .replace(/\\\\/g, "\\")
       .replace(/\\n/g, "\n")
       .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\");
+      .replace(/\\"/g, '"');
     if (content.length > 0) {
       files.push({ path, content });
     }
@@ -529,6 +529,18 @@ export async function runRalphLoop(
           ? `\n\nSUCCESS CRITERIA (your output MUST satisfy all of these):\n${task.success_criteria!.map((c, i) => `${i + 1}. ${c}`).join("\n")}`
           : "";
 
+        // ── Read existing project files so the model has full context ──
+        let existingFilesText = "";
+        try {
+          const existingFiles = await readAllProjectFiles(sandbox);
+          if (Object.keys(existingFiles).length > 0) {
+            const entries = Object.entries(existingFiles)
+              .map(([path, content]) => `--- ${path} ---\n${content.slice(0, 8000)}`)
+              .join("\n\n");
+            existingFilesText = `\n\nEXISTING PROJECT FILES (reference these for class names, IDs, structure):\n${entries}`;
+          }
+        } catch { /* proceed without file context */ }
+
         // ── Streaming API call — no timeout needed ──
         emit({
           event: "agent_log",
@@ -546,7 +558,7 @@ export async function runRalphLoop(
           messages: [
             {
               role: "user",
-              content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${criteriaText}${previousContext}${guardrailsText}\n\nRespond with ONLY the JSON object. Use plain text for file content (NOT base64).`,
+              content: `Project description: "${description}"\n\nExecute this task: "${task.label}"${criteriaText}${previousContext}${existingFilesText}${guardrailsText}\n\nRespond with ONLY the JSON object. Use plain text for file content (NOT base64).`,
             },
           ],
         });
