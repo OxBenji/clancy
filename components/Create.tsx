@@ -3,13 +3,22 @@
 import { useState } from "react";
 import type { PlanTask } from "@/lib/types";
 import BrandingOptions, { type BrandingConfig } from "@/components/BrandingOptions";
+import SectionPicker from "@/components/SectionPicker";
+import { SECTIONS } from "@/lib/sections";
 
 function uid(): string {
   return crypto.randomUUID();
 }
 
-function buildPromptWithBranding(desc: string, branding: BrandingConfig): string {
+function buildPromptWithBranding(desc: string, branding: BrandingConfig, selectedSections: string[]): string {
   const parts = [desc.trim()];
+  if (selectedSections.length > 0) {
+    const sectionDescs = selectedSections
+      .map((id) => SECTIONS.find((s) => s.id === id))
+      .filter(Boolean)
+      .map((s) => s!.prompt);
+    parts.push(`The page should include these sections: ${sectionDescs.join("; ")}.`);
+  }
   if (branding.brandName) {
     parts.push(`The brand/business name is "${branding.brandName}" — use it in headings and the page title.`);
   }
@@ -18,6 +27,9 @@ function buildPromptWithBranding(desc: string, branding: BrandingConfig): string
   }
   if (branding.style) {
     parts.push(`Design style: ${branding.style}.`);
+  }
+  if (branding.styleNotes.trim()) {
+    parts.push(`Additional style notes: ${branding.styleNotes.trim()}`);
   }
   return parts.join("\n\n");
 }
@@ -34,10 +46,12 @@ export default function Create({
   const [desc, setDesc] = useState(initialDescription);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [selectedSections, setSelectedSections] = useState<string[]>([]);
   const [branding, setBranding] = useState<BrandingConfig>({
     brandName: "",
     primaryColor: "",
     style: "",
+    styleNotes: "",
   });
 
   async function handleGenerate() {
@@ -51,7 +65,7 @@ export default function Create({
       const res = await fetch("/api/generate-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: buildPromptWithBranding(desc, branding) }),
+        body: JSON.stringify({ description: buildPromptWithBranding(desc, branding, selectedSections) }),
       });
 
       let data: { tasks?: { label: string; estimated_seconds: number; order_index: number; success_criteria?: string[] }[]; error?: string };
@@ -83,7 +97,7 @@ export default function Create({
           success_criteria: t.success_criteria,
         })
       );
-      onPlan(buildPromptWithBranding(desc, branding), tasks);
+      onPlan(buildPromptWithBranding(desc, branding, selectedSections), tasks);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -112,6 +126,18 @@ export default function Create({
           placeholder="e.g. A habit tracker app with daily streaks, a calendar heatmap, and push notification reminders..."
           className="w-full h-40 bg-surface border border-slate-700 rounded-xl p-4 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-accent resize-none font-mono text-sm"
         />
+        <div className="mt-4">
+          <SectionPicker
+            selected={selectedSections}
+            onToggle={(id) =>
+              setSelectedSections((prev) =>
+                prev.includes(id)
+                  ? prev.filter((s) => s !== id)
+                  : [...prev, id]
+              )
+            }
+          />
+        </div>
         <div className="mt-4">
           <BrandingOptions branding={branding} onChange={setBranding} />
         </div>

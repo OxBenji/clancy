@@ -130,12 +130,20 @@ export default function DashboardPage() {
                     )}
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDelete(project.id)}
-                  className="text-slate-600 hover:text-red-400 transition-colors text-xs font-mono flex-shrink-0"
-                >
-                  Delete
-                </button>
+                <div className="flex flex-col gap-2 flex-shrink-0">
+                  <a
+                    href={`/?fork=${encodeURIComponent(project.description || project.title || "")}`}
+                    className="text-accent hover:text-accent/80 transition-colors text-xs font-mono"
+                  >
+                    Fork
+                  </a>
+                  <button
+                    onClick={() => handleDelete(project.id)}
+                    className="text-slate-600 hover:text-red-400 transition-colors text-xs font-mono"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             ))}
           </div>

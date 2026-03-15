@@ -6,6 +6,7 @@ export interface BrandingConfig {
   brandName: string;
   primaryColor: string;
   style: string;
+  styleNotes: string;
 }
 
 const COLOR_PRESETS = [
@@ -132,6 +133,23 @@ export default function BrandingOptions({
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Style notes */}
+          <div>
+            <label className="text-slate-400 text-xs font-mono block mb-1">
+              Style notes (optional)
+            </label>
+            <textarea
+              value={branding.styleNotes}
+              onChange={(e) =>
+                onChange({ ...branding, styleNotes: e.target.value })
+              }
+              placeholder="e.g. Make it minimal and dark, use large typography, no stock photos..."
+              maxLength={300}
+              rows={2}
+              className="w-full bg-bg border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-accent font-mono resize-none"
+            />
           </div>
         </div>
       )}

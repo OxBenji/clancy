@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Landing from "@/components/Landing";
 import TemplateGrid from "@/components/TemplateGrid";
 import Create from "@/components/Create";
@@ -14,6 +14,18 @@ export default function Home() {
   const [view, setView] = useState<View>("landing");
   const [tasks, setTasks] = useState<PlanTask[]>([]);
   const [description, setDescription] = useState("");
+
+  // Handle fork query param from dashboard
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fork = params.get("fork");
+    if (fork) {
+      setDescription(fork);
+      setView("create");
+      // Clean URL without reload
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
   const [projectId, setProjectId] = useState(() => crypto.randomUUID());
 
   const handlePlan = useCallback((desc: string, newTasks: PlanTask[]) => {
