@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { rateLimitTiered } from "@/lib/rate-limit";
-import { auth } from "@clerk/nextjs/server";
+import { safeAuth } from "@/lib/safe-auth";
 import { validateDescription } from "@/lib/sanitize";
 
 export const maxDuration = 30;
@@ -73,7 +73,7 @@ function validateTasks(
 
 export async function POST(request: Request) {
   // Tiered rate limit
-  const { userId } = await auth();
+  const { userId } = await safeAuth();
   const rl = rateLimitTiered(request, "generate-plan", { userId });
   if (!rl.allowed) {
     return NextResponse.json(

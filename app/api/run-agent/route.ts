@@ -7,7 +7,7 @@ import {
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { runRalphLoop } from "@/lib/ralph";
 import { rateLimitTiered } from "@/lib/rate-limit";
-import { auth } from "@clerk/nextjs/server";
+import { safeAuth } from "@/lib/safe-auth";
 import { validateDescription, clampString } from "@/lib/sanitize";
 import type { RalphTask } from "@/lib/ralph";
 
@@ -28,7 +28,7 @@ function sseEvent(event: string, data: Record<string, unknown>): string {
 
 export async function POST(request: Request) {
   // Tiered rate limit: anonymous 5/min, authenticated 20/min, subscribed 60/min
-  const { userId } = await auth();
+  const { userId } = await safeAuth();
   const rl = rateLimitTiered(request, "run-agent", { userId });
   if (!rl.allowed) {
     return new Response(
