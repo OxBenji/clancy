@@ -91,33 +91,10 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
     cleaned = cleaned.slice(firstBrace);
   }
 
-  // Strip trailing text after the JSON object closes
-  // Find the matching closing brace by counting braces (respecting strings)
-  let braceDepth = 0;
-  let inStr = false;
-  let jsonEnd = -1;
-  for (let j = 0; j < cleaned.length; j++) {
-    const c = cleaned[j];
-    if (c === '"' && (j === 0 || cleaned[j - 1] !== '\\')) {
-      inStr = !inStr;
-    } else if (!inStr) {
-      if (c === '{') braceDepth++;
-      else if (c === '}') {
-        braceDepth--;
-        if (braceDepth === 0) {
-          jsonEnd = j;
-          break;
-        }
-      }
-    }
-  }
-  if (jsonEnd > 0 && jsonEnd < cleaned.length - 1) {
-    cleaned = cleaned.slice(0, jsonEnd + 1);
-  }
-
   // Fix literal newlines/tabs inside JSON string values — models often emit these
   // instead of proper \n escapes, which breaks JSON.parse.
   // Walk through the string and escape raw newlines/tabs only when inside a JSON string.
+  // IMPORTANT: Must run BEFORE brace-counting, because literal newlines break string detection.
   function fixLiteralNewlines(json: string): string {
     let result = "";
     let inString = false;
@@ -127,7 +104,7 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
       if (ch === '"') {
         // Count preceding backslashes to determine if the quote is escaped
         let backslashes = 0;
-        for (let k = i - 1; k >= 0 && json[k] === '\\'; k--) backslashes++;
+        for (let k = result.length - 1; k >= 0 && result[k] === '\\'; k--) backslashes++;
         if (backslashes % 2 === 0) {
           // Even number of backslashes = quote is NOT escaped
           inString = !inString;
@@ -147,9 +124,40 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
     return result;
   }
 
-  // Try JSON.parse directly — this is the expected path now
+  // Normalize literal newlines before any further processing
+  cleaned = fixLiteralNewlines(cleaned);
+
+  // Strip trailing text after the JSON object closes
+  // Find the matching closing brace by counting braces (respecting strings)
+  let braceDepth = 0;
+  let inStr = false;
+  let jsonEnd = -1;
+  for (let j = 0; j < cleaned.length; j++) {
+    const c = cleaned[j];
+    if (c === '"') {
+      let backslashes = 0;
+      for (let k = j - 1; k >= 0 && cleaned[k] === '\\'; k--) backslashes++;
+      if (backslashes % 2 === 0) {
+        inStr = !inStr;
+      }
+    } else if (!inStr) {
+      if (c === '{') braceDepth++;
+      else if (c === '}') {
+        braceDepth--;
+        if (braceDepth === 0) {
+          jsonEnd = j;
+          break;
+        }
+      }
+    }
+  }
+  if (jsonEnd > 0 && jsonEnd < cleaned.length - 1) {
+    cleaned = cleaned.slice(0, jsonEnd + 1);
+  }
+
+  // Try JSON.parse directly — cleaned already has literal newlines fixed
   try {
-    const parsed = JSON.parse(fixLiteralNewlines(cleaned));
+    const parsed = JSON.parse(cleaned);
 
     // Extract files
     const files: { path: string; content: string }[] = [];
