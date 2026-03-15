@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { rateLimit, getRequestIP } from "@/lib/rate-limit";
+import { rateLimitTiered } from "@/lib/rate-limit";
+import { auth } from "@clerk/nextjs/server";
 import { validateMessages } from "@/lib/sanitize";
 
 export const maxDuration = 60;
@@ -16,8 +17,8 @@ Guidelines:
 - If a question is vague, ask a clarifying question`;
 
 export async function POST(request: Request) {
-  const ip = getRequestIP(request);
-  const rl = rateLimit(`chat:${ip}`, { maxRequests: 20, windowMs: 60_000 });
+  const { userId } = await auth();
+  const rl = rateLimitTiered(request, "chat", { userId });
   if (!rl.allowed) {
     return new Response(JSON.stringify({ error: "Too many requests" }), {
       status: 429,

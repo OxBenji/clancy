@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useUser, useClerk } from "@clerk/nextjs";
 import { supabase } from "@/lib/supabase";
-import type { User } from "@supabase/supabase-js";
 
 interface Project {
   id: string;
@@ -14,39 +13,34 @@ interface Project {
 }
 
 export default function DashboardPage() {
-  const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const { user, isLoaded } = useUser();
+  const { signOut } = useClerk();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!isLoaded) return;
+    if (!user) {
+      window.location.href = "/auth";
+      return;
+    }
+
     async function load() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.replace("/auth");
-        return;
-      }
-
-      setUser(user);
-
       const { data } = await supabase
         .from("projects")
         .select("id, title, description, status, created_at")
-        .eq("user_id", user.id)
+        .eq("user_id", user!.id)
         .order("created_at", { ascending: false });
 
       setProjects(data || []);
       setLoading(false);
     }
     load();
-  }, [router]);
+  }, [isLoaded, user]);
 
   async function handleSignOut() {
-    await supabase.auth.signOut();
-    router.replace("/auth");
+    await signOut();
+    window.location.href = "/auth";
   }
 
   async function handleDelete(projectId: string) {
@@ -54,7 +48,7 @@ export default function DashboardPage() {
     setProjects((prev) => prev.filter((p) => p.id !== projectId));
   }
 
-  if (loading) {
+  if (!isLoaded || loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <span className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
@@ -73,7 +67,7 @@ export default function DashboardPage() {
             </p>
             <h1 className="font-syne font-800 text-3xl">Dashboard</h1>
             <p className="text-slate-500 text-sm mt-1">
-              {user?.email}
+              {user?.primaryEmailAddress?.emailAddress}
             </p>
           </div>
           <div className="flex items-center gap-3">

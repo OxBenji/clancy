@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useUser } from "@clerk/nextjs";
+import JSZip from "jszip";
 import { supabase } from "@/lib/supabase";
 import EditChat from "@/components/EditChat";
 import type { PlanTask, LogEntry, FileEntry } from "@/lib/types";
@@ -23,6 +25,7 @@ export default function Building({
   description: string;
   onBack: () => void;
 }) {
+  const { user } = useUser();
   const [tasks, setTasks] = useState<PlanTask[]>(initialTasks);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -45,17 +48,31 @@ export default function Building({
   const abortRef = useRef<AbortController | null>(null);
   const waitingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  async function handleSave() {
-    setSaving(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  async function handleDownloadZip() {
+    const zip = new JSZip();
+    for (const file of files) {
+      // Strip leading /home/user/project/ prefix for cleaner paths
+      const cleanPath = file.path.replace(/^\/home\/user\/project\//, "");
+      zip.file(cleanPath, file.content);
+    }
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${description.slice(0, 30).replace(/[^a-zA-Z0-9]/g, "-")}-project.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
+  async function handleSave() {
     if (!user) {
       window.location.href = "/auth";
       return;
     }
 
+    setSaving(true);
     const { error } = await supabase.from("projects").insert({
       id: projectId,
       user_id: user.id,
@@ -429,6 +446,17 @@ export default function Building({
               className="bg-bg/20 text-bg px-4 py-1 rounded-lg text-sm hover:bg-bg/30 transition-colors disabled:opacity-50"
             >
               {saving ? "Saving..." : "Save Project"}
+            </button>
+          )}
+          {files.length > 0 && (
+            <button
+              onClick={handleDownloadZip}
+              className="bg-bg text-accent px-4 py-1 rounded-lg text-sm hover:bg-bg/80 transition-colors inline-flex items-center gap-1"
+            >
+              Download ZIP
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
             </button>
           )}
         </div>

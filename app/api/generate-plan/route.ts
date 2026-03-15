@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { rateLimit, getRequestIP } from "@/lib/rate-limit";
+import { rateLimitTiered } from "@/lib/rate-limit";
+import { auth } from "@clerk/nextjs/server";
 import { validateDescription } from "@/lib/sanitize";
 
 export const maxDuration = 30;
@@ -71,9 +72,9 @@ function validateTasks(
 }
 
 export async function POST(request: Request) {
-  // Rate limit: 10 requests per IP per minute
-  const ip = getRequestIP(request);
-  const rl = rateLimit(`generate-plan:${ip}`, { maxRequests: 10, windowMs: 60_000 });
+  // Tiered rate limit
+  const { userId } = await auth();
+  const rl = rateLimitTiered(request, "generate-plan", { userId });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "Too many requests. Please wait before trying again." },

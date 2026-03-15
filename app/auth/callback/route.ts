@@ -1,19 +1,8 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServer } from "@/lib/supabase-server";
 
+// Clerk handles auth callbacks automatically via middleware.
+// This route just redirects to dashboard as a fallback.
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
-  const code = searchParams.get("code");
-
-  if (code) {
-    const supabase = createSupabaseServer();
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-    if (!error) {
-      return NextResponse.redirect(`${origin}/dashboard`);
-    }
-  }
-
-  // If no code or exchange failed, redirect to auth page
-  return NextResponse.redirect(`${origin}/auth`);
+  const { origin } = new URL(request.url);
+  return NextResponse.redirect(`${origin}/dashboard`);
 }
