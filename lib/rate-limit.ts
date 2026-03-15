@@ -42,3 +42,30 @@ export function getRequestIP(request: Request): string {
     "unknown"
   );
 }
+
+/** Rate-limit tiers based on authentication status. */
+const TIERS = {
+  anonymous: { maxRequests: 5, windowMs: 60_000 },
+  authenticated: { maxRequests: 20, windowMs: 60_000 },
+  subscribed: { maxRequests: 60, windowMs: 60_000 },
+} as const;
+
+export type RateLimitTier = keyof typeof TIERS;
+
+/**
+ * Tiered rate limiter — uses userId when available, falls back to IP.
+ * Subscribed users get the most generous limits.
+ */
+export function rateLimitTiered(
+  request: Request,
+  endpoint: string,
+  opts: { userId?: string | null; tier?: RateLimitTier } = {}
+): { allowed: boolean; retryAfterMs?: number } {
+  const tier = opts.tier ?? (opts.userId ? "authenticated" : "anonymous");
+  const limits = TIERS[tier];
+  const key = opts.userId
+    ? `${endpoint}:user:${opts.userId}`
+    : `${endpoint}:ip:${getRequestIP(request)}`;
+
+  return rateLimit(key, limits);
+}

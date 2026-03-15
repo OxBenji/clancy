@@ -6,7 +6,8 @@ import {
 } from "@/lib/sandbox";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { runRalphLoop } from "@/lib/ralph";
-import { rateLimit, getRequestIP } from "@/lib/rate-limit";
+import { rateLimitTiered } from "@/lib/rate-limit";
+import { auth } from "@clerk/nextjs/server";
 import { validateDescription, clampString } from "@/lib/sanitize";
 import type { RalphTask } from "@/lib/ralph";
 
@@ -26,9 +27,9 @@ function sseEvent(event: string, data: Record<string, unknown>): string {
 }
 
 export async function POST(request: Request) {
-  // Rate limit: 10 requests per IP per minute
-  const ip = getRequestIP(request);
-  const rl = rateLimit(`run-agent:${ip}`, { maxRequests: 10, windowMs: 60_000 });
+  // Tiered rate limit: anonymous 5/min, authenticated 20/min, subscribed 60/min
+  const { userId } = await auth();
+  const rl = rateLimitTiered(request, "run-agent", { userId });
   if (!rl.allowed) {
     return new Response(
       JSON.stringify({ error: "Too many requests. Please wait before trying again." }),

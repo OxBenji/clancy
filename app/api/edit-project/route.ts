@@ -6,7 +6,8 @@ import {
   getPreviewUrl,
 } from "@/lib/sandbox";
 import { readAllProjectFiles } from "@/lib/ralph";
-import { rateLimit, getRequestIP } from "@/lib/rate-limit";
+import { rateLimitTiered } from "@/lib/rate-limit";
+import { auth } from "@clerk/nextjs/server";
 import { clampString } from "@/lib/sanitize";
 
 export const maxDuration = 120;
@@ -77,8 +78,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const ip = getRequestIP(request);
-  const rl = rateLimit(`edit-project:${ip}`, { maxRequests: 15, windowMs: 60_000 });
+  const { userId } = await auth();
+  const rl = rateLimitTiered(request, "edit-project", { userId });
   if (!rl.allowed) {
     return new Response(JSON.stringify({ error: "Too many requests" }), {
       status: 429,
