@@ -61,9 +61,13 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased bg-bg min-h-screen">
-        <ClerkProvider appearance={{ baseTheme: dark }}>
-          {children}
-        </ClerkProvider>
+        {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (
+          <ClerkProvider appearance={{ baseTheme: dark }}>
+            {children}
+          </ClerkProvider>
+        ) : (
+          children
+        )}
       </body>
     </html>
   );

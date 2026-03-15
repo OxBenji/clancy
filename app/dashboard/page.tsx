@@ -59,7 +59,6 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen px-6 py-12">
       <div className="max-w-3xl mx-auto">
-        {/* Header */}
         <div className="flex items-center justify-between mb-10">
           <div>
             <p className="text-accent font-mono text-sm tracking-widest uppercase mb-1">
@@ -86,7 +85,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Projects */}
         <h2 className="font-syne font-700 text-xl mb-4">Your Projects</h2>
 
         {projects.length === 0 ? (
