@@ -16,9 +16,11 @@ const ICONS: Record<string, string> = {
 export default function TemplateGrid({
   onSelect,
   onCustom,
+  onBrowseThemes,
 }: {
   onSelect: (template: Template) => void;
   onCustom: () => void;
+  onBrowseThemes?: () => void;
 }) {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen px-6 py-12">
@@ -59,6 +61,14 @@ export default function TemplateGrid({
           >
             Describe My Own Project
           </button>
+          {onBrowseThemes && (
+            <button
+              onClick={onBrowseThemes}
+              className="mt-3 border border-slate-700 text-slate-400 font-syne font-600 text-sm px-6 py-3 rounded-xl hover:border-accent hover:text-accent transition-all"
+            >
+              Browse Community Themes
+            </button>
+          )}
           <p className="text-slate-600 font-mono text-xs mt-3">
             or type anything in plain English
           </p>

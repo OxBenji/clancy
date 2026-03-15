@@ -5,9 +5,11 @@ import { useUser } from "@/lib/clerk-hooks";
 import JSZip from "jszip";
 import { supabase } from "@/lib/supabase";
 import EditChat from "@/components/EditChat";
+import SectionReorder from "@/components/SectionReorder";
+import ExportOptions from "@/components/ExportOptions";
 import type { PlanTask, LogEntry, FileEntry } from "@/lib/types";
 
-type MobilePanel = "tasks" | "log" | "files" | "edit";
+type MobilePanel = "tasks" | "log" | "files" | "edit" | "export";
 
 /** Strip HTML tags from log text to prevent XSS. */
 function sanitizeLog(text: string): string {
@@ -33,6 +35,8 @@ export default function Building({
   const [sandboxId, setSandboxId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [showEdit, setShowEdit] = useState(false);
+  const [editTab, setEditTab] = useState<"chat" | "reorder" | "export">("chat");
+  const [reorderLoading, setReorderLoading] = useState(false);
   const [sandboxExpired, setSandboxExpired] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
   const [complete, setComplete] = useState(false);
@@ -466,7 +470,7 @@ export default function Building({
       <div className="lg:hidden flex border-b border-slate-800">
         {(
           complete && sandboxId && !sandboxExpired
-            ? ["tasks", "log", "files", "edit"] as MobilePanel[]
+            ? ["tasks", "log", "files", "edit", "export"] as MobilePanel[]
             : ["tasks", "log", "files"] as MobilePanel[]
         ).map((panel) => (
           <button
@@ -484,6 +488,8 @@ export default function Building({
               ? "Log"
               : panel === "edit"
               ? "Edit"
+              : panel === "export"
+              ? "Export"
               : `Files (${files.length})`}
           </button>
         ))}
@@ -738,10 +744,55 @@ export default function Building({
           </div>
         )}
 
-        {/* Right panel: Edit Chat or Preview (desktop only) */}
+        {/* Mobile export panel */}
+        {complete && (
+          <div
+            className={`flex-1 flex flex-col min-h-0 lg:hidden ${
+              mobilePanel !== "export" ? "hidden" : ""
+            }`}
+          >
+            <div className="p-6 overflow-y-auto">
+              <ExportOptions
+                files={files}
+                description={description}
+                previewUrl={previewUrl}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Right panel: Edit Chat / Reorder / Preview (desktop only) */}
         {complete && sandboxId && !activeFile && !sandboxExpired && (
           <div className="hidden lg:flex lg:w-[380px] flex-shrink-0 border-l border-slate-800 flex-col">
-            {!showEdit ? (
+            {/* Tab bar */}
+            <div className="flex border-b border-slate-800">
+              {(["chat", "reorder", "export"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setEditTab(tab)}
+                  className={`flex-1 py-2 text-xs font-mono transition-colors ${
+                    editTab === tab
+                      ? "text-accent border-b-2 border-accent"
+                      : "text-slate-500 hover:text-slate-300"
+                  }`}
+                >
+                  {tab === "chat" ? "Edit" : tab === "reorder" ? "Reorder" : "Export"}
+                </button>
+              ))}
+              {previewUrl && (
+                <a
+                  href={previewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2 px-3 text-xs font-mono text-slate-500 hover:text-slate-300 text-center transition-colors"
+                >
+                  ↗
+                </a>
+              )}
+            </div>
+
+            {/* Tab content */}
+            {editTab === "chat" ? (
               <EditChat
                 sandboxId={sandboxId}
                 files={files}
@@ -755,54 +806,71 @@ export default function Building({
                 onPreviewRefresh={() => setIframeKey((k) => k + 1)}
                 onSandboxExpired={() => setSandboxExpired(true)}
               />
+            ) : editTab === "reorder" ? (
+              <SectionReorder
+                files={files}
+                loading={reorderLoading}
+                onReorder={async (instruction) => {
+                  setReorderLoading(true);
+                  try {
+                    const res = await fetch("/api/edit-project", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        sandbox_id: sandboxId,
+                        message: instruction,
+                        context: files.slice(0, 10).map((f) => ({
+                          path: f.path,
+                          content: f.content,
+                        })),
+                      }),
+                    });
+                    if (!res.body) return;
+                    const reader = res.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = "";
+                    while (true) {
+                      const { done, value } = await reader.read();
+                      if (done) break;
+                      buffer += decoder.decode(value, { stream: true });
+                      const parts = buffer.split("\n\n");
+                      buffer = parts.pop() || "";
+                      for (const part of parts) {
+                        let event = "message";
+                        let data = "";
+                        for (const line of part.split("\n")) {
+                          if (line.startsWith("event: ")) event = line.slice(7);
+                          if (line.startsWith("data: ")) data = line.slice(6);
+                        }
+                        if (!data) continue;
+                        try {
+                          const parsed = JSON.parse(data);
+                          if (event === "file_updated") {
+                            setFiles((prev) => [
+                              ...prev.filter((f) => f.path !== parsed.path),
+                              { path: parsed.path, content: parsed.content },
+                            ]);
+                          } else if (event === "preview_refresh") {
+                            setIframeKey((k) => k + 1);
+                          }
+                        } catch {
+                          // skip
+                        }
+                      }
+                    }
+                  } finally {
+                    setReorderLoading(false);
+                  }
+                }}
+              />
             ) : (
-              <>
-                <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-                  <div>
-                    <h3 className="font-syne font-700 text-sm">
-                      Live Preview
-                    </h3>
-                    <p className="text-slate-500 text-xs font-mono truncate max-w-[200px]">
-                      {previewUrl || "No preview available"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setShowEdit(false)}
-                      className="text-accent text-xs font-mono hover:underline"
-                    >
-                      Edit
-                    </button>
-                    {previewUrl && (
-                      <a
-                        href={previewUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-slate-400 text-xs font-mono hover:text-slate-200"
-                      >
-                        Open
-                      </a>
-                    )}
-                  </div>
-                </div>
-                {previewUrl ? (
-                  <div className="flex-1 bg-white">
-                    <iframe
-                      key={iframeKey}
-                      src={previewUrl}
-                      title="Project Preview"
-                      className="w-full h-full border-0"
-                      sandbox="allow-scripts allow-same-origin allow-forms"
-                    />
-                  </div>
-                ) : (
-                  <div className="flex-1 flex items-center justify-center">
-                    <p className="text-slate-600 font-mono text-sm">
-                      Preview will appear here
-                    </p>
-                  </div>
-                )}
-              </>
+              <div className="p-4 overflow-y-auto">
+                <ExportOptions
+                  files={files}
+                  description={description}
+                  previewUrl={previewUrl}
+                />
+              </div>
             )}
           </div>
         )}

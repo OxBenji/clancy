@@ -1,0 +1,50 @@
+[
+  {
+    "id": "neon-portfolio",
+    "name": "Neon Portfolio",
+    "author": "Community",
+    "description": "Cyberpunk-inspired portfolio with neon accents and dark backgrounds",
+    "tags": ["portfolio", "dark", "creative"],
+    "prompt": "A cyberpunk-themed portfolio website with neon green and purple accent colors on a dark background. Include a glitch-effect hero section, project gallery with hover glow effects, skills section with animated progress bars, and a contact form. Use monospace fonts and subtle scanline effects."
+  },
+  {
+    "id": "minimal-agency",
+    "name": "Minimal Agency",
+    "author": "Community",
+    "description": "Clean agency site with lots of whitespace and elegant typography",
+    "tags": ["agency", "minimal", "professional"],
+    "prompt": "A minimal agency website with a clean white design, elegant serif typography, and subtle animations. Include a hero with large text, services grid, case studies with large images, team section, and contact form. Use black and white with one gold accent color."
+  },
+  {
+    "id": "gradient-saas",
+    "name": "Gradient SaaS",
+    "author": "Community",
+    "description": "Bold SaaS landing page with gradient backgrounds and glassmorphism",
+    "tags": ["saas", "modern", "gradient"],
+    "prompt": "A SaaS landing page with bold gradient backgrounds (purple to blue), glassmorphism cards, and smooth animations. Include a hero with product mockup placeholder, features with floating cards, pricing tiers, testimonials carousel, and CTA section. Modern and premium feel."
+  },
+  {
+    "id": "retro-blog",
+    "name": "Retro Blog",
+    "author": "Community",
+    "description": "Vintage-inspired blog with warm tones and newspaper-style layout",
+    "tags": ["blog", "retro", "creative"],
+    "prompt": "A retro-styled blog with warm cream backgrounds, serif typography reminiscent of old newspapers, and vintage decorative elements. Include a masthead header, featured article with large image, article grid with dates and categories, sidebar with about and recent posts, and a simple footer."
+  },
+  {
+    "id": "eco-store",
+    "name": "Eco Store",
+    "author": "Community",
+    "description": "Nature-themed e-commerce page with earthy colors",
+    "tags": ["ecommerce", "nature", "warm"],
+    "prompt": "An eco-friendly store landing page with earthy green and brown tones, organic shapes, and nature-inspired design. Include a hero with mission statement, featured products grid with image placeholders and prices, sustainability section with stats, testimonials, and newsletter signup. Warm and inviting."
+  },
+  {
+    "id": "developer-hub",
+    "name": "Developer Hub",
+    "author": "Community",
+    "description": "Technical documentation-style site with code-themed design",
+    "tags": ["developer", "dark", "technical"],
+    "prompt": "A developer-focused landing page with a dark terminal-inspired design, monospace fonts, and syntax-highlighting-colored accents. Include a hero with typing animation effect, feature cards styled like code blocks, API documentation preview section, pricing for API tiers, and a footer with links. Use green and blue accents on dark backgrounds."
+  }
+]
