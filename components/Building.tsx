@@ -34,7 +34,6 @@ export default function Building({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [sandboxId, setSandboxId] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [showEdit, setShowEdit] = useState(false);
   const [editTab, setEditTab] = useState<"chat" | "reorder" | "export">("chat");
   const [reorderLoading, setReorderLoading] = useState(false);
   const [sandboxExpired, setSandboxExpired] = useState(false);
