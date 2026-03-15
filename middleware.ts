@@ -12,8 +12,10 @@ const isPublicRoute = createRouteMatcher([
   "/api/edit-project",
 ]);
 
-// Only enable Clerk middleware when keys are configured
-const clerkEnabled = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+// Only enable Clerk middleware when keys are properly configured
+const clerkEnabled =
+  !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY &&
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY.length > 20;
 
 function noopMiddleware(_request: NextRequest) {
   return NextResponse.next();

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { ClerkProvider } from "@clerk/nextjs";
 import { dark } from "@clerk/themes";
+import { isClerkConfigured } from "@/lib/clerk-enabled";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -61,7 +62,7 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased bg-bg min-h-screen">
-        {process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ? (
+        {isClerkConfigured() ? (
           <ClerkProvider appearance={{ baseTheme: dark }}>
             {children}
           </ClerkProvider>
