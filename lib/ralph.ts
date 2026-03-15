@@ -260,34 +260,35 @@ export async function readAllProjectFiles(
   extensionPattern = /\.(html|css|js|ts|tsx|jsx|json|md|txt)$/
 ): Promise<Record<string, string>> {
   const fileContents: Record<string, string> = {};
+  const ROOT = "/home/user/project";
 
-  let topLevel: string[] = [];
-  try {
-    topLevel = await listFiles(sandbox, "/home/user/project");
-  } catch {
-    return fileContents;
-  }
+  // Recursively read up to 3 levels deep (covers css/components/header.css etc.)
+  async function readDir(dirPath: string, prefix: string, depth: number) {
+    if (depth > 3) return;
+    let entries: string[];
+    try {
+      entries = await listFiles(sandbox, dirPath);
+    } catch {
+      return;
+    }
 
-  for (const fname of topLevel) {
-    if (extensionPattern.test(fname)) {
-      try {
-        fileContents[fname] = await readFile(sandbox, `/home/user/project/${fname}`);
-      } catch { /* skip */ }
-    } else if (!fname.includes(".")) {
-      // Likely a directory — read one level deeper
-      try {
-        const subFiles = await listFiles(sandbox, `/home/user/project/${fname}`);
-        for (const sf of subFiles) {
-          if (extensionPattern.test(sf)) {
-            try {
-              fileContents[`${fname}/${sf}`] = await readFile(sandbox, `/home/user/project/${fname}/${sf}`);
-            } catch { /* skip */ }
-          }
-        }
-      } catch { /* not a directory */ }
+    for (const name of entries) {
+      if (name === "node_modules" || name === ".git") continue;
+      const fullPath = `${dirPath}/${name}`;
+      const relPath = prefix ? `${prefix}/${name}` : name;
+
+      if (extensionPattern.test(name)) {
+        try {
+          fileContents[relPath] = await readFile(sandbox, fullPath);
+        } catch { /* skip */ }
+      } else if (!name.includes(".")) {
+        // Likely a directory — recurse
+        await readDir(fullPath, relPath, depth + 1);
+      }
     }
   }
 
+  await readDir(ROOT, "", 0);
   return fileContents;
 }
 
@@ -726,7 +727,8 @@ export async function runRalphLoop(
           }
 
           const sandboxFiles = await readAllProjectFiles(sandbox);
-          const allFiles = { ...writtenFiles, ...sandboxFiles };
+          // Written files take priority — sandbox reads may be stale
+          const allFiles = { ...sandboxFiles, ...writtenFiles };
 
           const { passed, failures } = verifyCriteriaLocally(
             allFiles,
