@@ -2,9 +2,24 @@
 
 import { useState } from "react";
 import type { PlanTask } from "@/lib/types";
+import BrandingOptions, { type BrandingConfig } from "@/components/BrandingOptions";
 
 function uid(): string {
   return crypto.randomUUID();
+}
+
+function buildPromptWithBranding(desc: string, branding: BrandingConfig): string {
+  const parts = [desc.trim()];
+  if (branding.brandName) {
+    parts.push(`The brand/business name is "${branding.brandName}" — use it in headings and the page title.`);
+  }
+  if (branding.primaryColor) {
+    parts.push(`Use ${branding.primaryColor} as the primary/accent color throughout the design.`);
+  }
+  if (branding.style) {
+    parts.push(`Design style: ${branding.style}.`);
+  }
+  return parts.join("\n\n");
 }
 
 export default function Create({
@@ -19,6 +34,11 @@ export default function Create({
   const [desc, setDesc] = useState(initialDescription);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [branding, setBranding] = useState<BrandingConfig>({
+    brandName: "",
+    primaryColor: "",
+    style: "",
+  });
 
   async function handleGenerate() {
     setError("");
@@ -31,7 +51,7 @@ export default function Create({
       const res = await fetch("/api/generate-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: desc.trim() }),
+        body: JSON.stringify({ description: buildPromptWithBranding(desc, branding) }),
       });
 
       let data: { tasks?: { label: string; estimated_seconds: number; order_index: number; success_criteria?: string[] }[]; error?: string };
@@ -63,7 +83,7 @@ export default function Create({
           success_criteria: t.success_criteria,
         })
       );
-      onPlan(desc.trim(), tasks);
+      onPlan(buildPromptWithBranding(desc, branding), tasks);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -92,6 +112,9 @@ export default function Create({
           placeholder="e.g. A habit tracker app with daily streaks, a calendar heatmap, and push notification reminders..."
           className="w-full h-40 bg-surface border border-slate-700 rounded-xl p-4 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-accent resize-none font-mono text-sm"
         />
+        <div className="mt-4">
+          <BrandingOptions branding={branding} onChange={setBranding} />
+        </div>
         {error && (
           <p className="text-red-400 text-sm mt-2">{error}</p>
         )}

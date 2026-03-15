@@ -1,0 +1,58 @@
+[
+  {
+    "id": "landing",
+    "name": "Landing Page",
+    "description": "A clean, modern landing page with hero, features, and CTA",
+    "icon": "rocket",
+    "prompt": "A professional landing page with a hero section, 3 feature cards, a testimonials section, and a call-to-action footer. Use a modern dark theme with a bright accent color. Include smooth scroll, responsive design, and subtle animations."
+  },
+  {
+    "id": "portfolio",
+    "name": "Portfolio",
+    "description": "Personal portfolio site with project gallery",
+    "icon": "briefcase",
+    "prompt": "A personal portfolio website with a hero intro, about me section, project gallery with image cards, skills/tech stack section, and contact form. Modern minimalist design, responsive, with hover effects on project cards."
+  },
+  {
+    "id": "restaurant",
+    "name": "Restaurant / Cafe",
+    "description": "Restaurant website with menu and reservation info",
+    "icon": "utensils",
+    "prompt": "A restaurant website with a hero image section, about the restaurant, menu section with categories (appetizers, mains, desserts, drinks) with prices, opening hours, location map placeholder, and a reservation contact section. Warm, inviting design."
+  },
+  {
+    "id": "saas",
+    "name": "SaaS Product",
+    "description": "SaaS product page with pricing tiers",
+    "icon": "layers",
+    "prompt": "A SaaS product landing page with a hero explaining the product, feature grid with icons, 3 pricing tiers (Free, Pro, Enterprise) with feature comparison, FAQ accordion section, and a signup CTA. Clean, professional, tech-forward design."
+  },
+  {
+    "id": "blog",
+    "name": "Blog / Journal",
+    "description": "Simple blog with article list and reading view",
+    "icon": "pen",
+    "prompt": "A personal blog with a header, featured post hero, grid of blog post cards with titles, dates, and excerpts, a sidebar with categories and about section. Clean typography-focused design optimized for reading."
+  },
+  {
+    "id": "linkinbio",
+    "name": "Link in Bio",
+    "description": "Simple link-in-bio page for social profiles",
+    "icon": "link",
+    "prompt": "A link-in-bio page with a profile photo placeholder, name, short bio, and a vertical list of link buttons (Instagram, Twitter, YouTube, TikTok, Website, Email). Each link is a styled button. Mobile-first design with a gradient background."
+  },
+  {
+    "id": "waitlist",
+    "name": "Waitlist / Coming Soon",
+    "description": "Pre-launch page with email capture",
+    "icon": "clock",
+    "prompt": "A coming soon / waitlist page with a bold headline, countdown timer placeholder, product description, email input field with submit button, and social links. Dark dramatic design with a gradient accent."
+  },
+  {
+    "id": "event",
+    "name": "Event Page",
+    "description": "Event landing page with schedule and registration",
+    "icon": "calendar",
+    "prompt": "An event landing page with event name, date, and location hero, speaker/lineup cards, event schedule timeline, venue info, and registration CTA button. Modern conference-style design."
+  }
+]

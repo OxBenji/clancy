@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 import EditChat from "@/components/EditChat";
 import type { PlanTask, LogEntry, FileEntry } from "@/lib/types";
 
-type MobilePanel = "tasks" | "log" | "files";
+type MobilePanel = "tasks" | "log" | "files" | "edit";
 
 /** Strip HTML tags from log text to prevent XSS. */
 function sanitizeLog(text: string): string {
@@ -464,7 +464,11 @@ export default function Building({
 
       {/* Mobile panel toggle */}
       <div className="lg:hidden flex border-b border-slate-800">
-        {(["tasks", "log", "files"] as MobilePanel[]).map((panel) => (
+        {(
+          complete && sandboxId && !sandboxExpired
+            ? ["tasks", "log", "files", "edit"] as MobilePanel[]
+            : ["tasks", "log", "files"] as MobilePanel[]
+        ).map((panel) => (
           <button
             key={panel}
             onClick={() => setMobilePanel(panel)}
@@ -478,6 +482,8 @@ export default function Building({
               ? `Tasks (${tasks.filter((t) => t.status === "done").length}/${tasks.length})`
               : panel === "log"
               ? "Log"
+              : panel === "edit"
+              ? "Edit"
               : `Files (${files.length})`}
           </button>
         ))}
@@ -709,10 +715,33 @@ export default function Building({
           </div>
         </div>
 
+        {/* Mobile edit panel */}
+        {complete && sandboxId && !sandboxExpired && (
+          <div
+            className={`flex-1 flex flex-col min-h-0 lg:hidden ${
+              mobilePanel !== "edit" ? "hidden" : ""
+            }`}
+          >
+            <EditChat
+              sandboxId={sandboxId}
+              files={files}
+              previewUrl={previewUrl}
+              onFileUpdate={(path, content) => {
+                setFiles((prev) => [
+                  ...prev.filter((f) => f.path !== path),
+                  { path, content },
+                ]);
+              }}
+              onPreviewRefresh={() => setIframeKey((k) => k + 1)}
+              onSandboxExpired={() => setSandboxExpired(true)}
+            />
+          </div>
+        )}
+
         {/* Right panel: Edit Chat or Preview (desktop only) */}
         {complete && sandboxId && !activeFile && !sandboxExpired && (
           <div className="hidden lg:flex lg:w-[380px] flex-shrink-0 border-l border-slate-800 flex-col">
-            {showEdit ? (
+            {!showEdit ? (
               <EditChat
                 sandboxId={sandboxId}
                 files={files}
@@ -739,7 +768,7 @@ export default function Building({
                   </div>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setShowEdit(true)}
+                      onClick={() => setShowEdit(false)}
                       className="text-accent text-xs font-mono hover:underline"
                     >
                       Edit
