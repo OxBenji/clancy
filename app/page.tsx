@@ -1,19 +1,32 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Landing from "@/components/Landing";
 import TemplateGrid from "@/components/TemplateGrid";
 import Create from "@/components/Create";
 import Planning from "@/components/Planning";
 import Building from "@/components/Building";
 import CodingChat from "@/components/CodingChat";
+import ThemeMarketplace from "@/components/ThemeMarketplace";
 import type { PlanTask } from "@/lib/types";
-type View = "landing" | "templates" | "create" | "planning" | "building" | "chat";
+type View = "landing" | "templates" | "create" | "planning" | "building" | "chat" | "themes";
 
 export default function Home() {
   const [view, setView] = useState<View>("landing");
   const [tasks, setTasks] = useState<PlanTask[]>([]);
   const [description, setDescription] = useState("");
+
+  // Handle fork query param from dashboard
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fork = params.get("fork");
+    if (fork) {
+      setDescription(fork);
+      setView("create");
+      // Clean URL without reload
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
   const [projectId, setProjectId] = useState(() => crypto.randomUUID());
 
   const handlePlan = useCallback((desc: string, newTasks: PlanTask[]) => {
@@ -49,6 +62,7 @@ export default function Home() {
             setView("create");
           }}
           onCustom={() => setView("create")}
+          onBrowseThemes={() => setView("themes")}
         />
       );
     case "create":
@@ -78,5 +92,15 @@ export default function Home() {
       );
     case "chat":
       return <CodingChat onBack={handleReset} />;
+    case "themes":
+      return (
+        <ThemeMarketplace
+          onSelect={(theme) => {
+            setDescription(theme.prompt);
+            setView("create");
+          }}
+          onBack={() => setView("templates")}
+        />
+      );
   }
 }
