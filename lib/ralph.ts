@@ -85,6 +85,36 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
   let cleaned = text.trim();
   cleaned = cleaned.replace(/```(?:json)?\s*\n?/g, "").replace(/\n?\s*```/g, "").trim();
 
+  // Strip preamble text before JSON — models sometimes add explanation before the JSON object
+  const firstBrace = cleaned.indexOf("{");
+  if (firstBrace > 0) {
+    cleaned = cleaned.slice(firstBrace);
+  }
+
+  // Strip trailing text after the JSON object closes
+  // Find the matching closing brace by counting braces (respecting strings)
+  let braceDepth = 0;
+  let inStr = false;
+  let jsonEnd = -1;
+  for (let j = 0; j < cleaned.length; j++) {
+    const c = cleaned[j];
+    if (c === '"' && (j === 0 || cleaned[j - 1] !== '\\')) {
+      inStr = !inStr;
+    } else if (!inStr) {
+      if (c === '{') braceDepth++;
+      else if (c === '}') {
+        braceDepth--;
+        if (braceDepth === 0) {
+          jsonEnd = j;
+          break;
+        }
+      }
+    }
+  }
+  if (jsonEnd > 0 && jsonEnd < cleaned.length - 1) {
+    cleaned = cleaned.slice(0, jsonEnd + 1);
+  }
+
   // Fix literal newlines/tabs inside JSON string values — models often emit these
   // instead of proper \n escapes, which breaks JSON.parse.
   // Walk through the string and escape raw newlines/tabs only when inside a JSON string.
@@ -94,8 +124,14 @@ function parseAgentResponse(text: string): { action: AgentAction | null; complet
     let i = 0;
     while (i < json.length) {
       const ch = json[i];
-      if (ch === '"' && (i === 0 || json[i - 1] !== '\\')) {
-        inString = !inString;
+      if (ch === '"') {
+        // Count preceding backslashes to determine if the quote is escaped
+        let backslashes = 0;
+        for (let k = i - 1; k >= 0 && json[k] === '\\'; k--) backslashes++;
+        if (backslashes % 2 === 0) {
+          // Even number of backslashes = quote is NOT escaped
+          inString = !inString;
+        }
         result += ch;
       } else if (inString && ch === '\n') {
         result += '\\n';
@@ -497,7 +533,7 @@ export async function runRalphLoop(
 
         const stream = anthropic.messages.stream({
           model: "claude-sonnet-4-6",
-          max_tokens: 4096,
+          max_tokens: 16384,
           system: TASK_SYSTEM_PROMPT,
           messages: [
             {
